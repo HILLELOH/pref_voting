@@ -11,7 +11,6 @@ import math
 from typing import Optional
 
 
-# Type aliases
 Vector = list[float] # 512-dim embedding (Universal Sentence Encoder)
 Coalition = tuple[frozenset[int], str] # (agent_indices, compromise_sentence)
 
