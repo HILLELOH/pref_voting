@@ -235,3 +235,42 @@ class TestCoalitionFormation:
         r1 = coalition_formation(ideal, "Do nothing.", seed=42)
         r2 = coalition_formation(ideal, "Do nothing.", seed=42)
         assert r1[1] == r2[1]
+
+    def test_empty_input(self):
+        """Edge case: Empty input (0 agents). Should return the status quo and empty list."""
+        sentence, agents = coalition_formation({}, "Status quo remains.")
+        assert sentence == "Status quo remains."
+        assert len(agents) == 0
+
+    def test_invalid_majority_quota_raises_error(self):
+        """Edge case: Invalid input. Quota cannot be greater than 1.0"""
+        ideal = {0: "A", 1: "B"}
+        with pytest.raises(ValueError):
+            coalition_formation(ideal, "Status quo", majority_quota=1.5)
+
+    def test_invalid_alpha_raises_error(self):
+        """Edge case: Invalid input. Alpha must be in [-1, 0, 1]"""
+        ideal = {0: "A", 1: "B"}
+        with pytest.raises(ValueError):
+            coalition_formation(ideal, "Status quo", alpha=5)
+
+    def test_very_large_random_input_subset_property(self):
+        """Large random input: Checking properties on 100 agents."""
+        import random
+        random.seed(100)
+        topics = ["Solar", "Wind", "Nuclear", "Geothermal", "Hydro", "Biomass"]
+        ideal = {i: random.choice(topics) for i in range(100)}
+
+        # Demanding a 60% majority
+        sentence, agents = coalition_formation(
+            ideal, "Status quo", majority_quota=0.6, seed=100
+        )
+        
+        # Property 1: The returned agents must be a valid subset of the original keys
+        assert set(agents).issubset(set(ideal.keys()))
+        
+        # Property 2: The coalition must have reached at least the 60% quota
+        assert len(agents) >= 60
+        
+        # Property 3: The final returned compromise must be a string
+        assert isinstance(sentence, str)
