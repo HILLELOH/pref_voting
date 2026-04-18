@@ -1,8 +1,12 @@
 """
 Tests for coalition_formation.py (AI textual version).
 
-All tests currently FAIL because the implementations are empty stubs.
-They will pass once the algorithm is fully implemented.
+Paper: "AI-Generated Compromises for Coalition Formation",
+       by Eyal Briman, Ehud Shapiro, and Nimrod Talmon (2024),
+       https://arxiv.org/abs/2410.21440
+
+Programmers: Hillel Ohayon.
+Date: 2025-04-04.
 """
 
 import math
@@ -42,12 +46,14 @@ class TestCosineDissimilarity:
         assert cosine_dissimilarity(a, b) == pytest.approx(cosine_dissimilarity(b, a))
 
     def test_result_in_valid_range(self):
-        # Explanation: The output of the distance formula must always be a positive number.
+        # Explanation: The distance formula returns values in [0, 2] (paper footnote 6:
+        # d_cos ∈ [0,2]). sqrt(2) is the max only on the unit sphere; for arbitrary
+        # vectors the cosine can be negative, giving d up to 2.
         import random; random.seed(0)
         a = [random.gauss(0, 1) for _ in range(512)]
         b = [random.gauss(0, 1) for _ in range(512)]
         d = cosine_dissimilarity(a, b)
-        assert 0.0 <= d <= math.sqrt(2) + 1e-9
+        assert 0.0 <= d <= 2.0 + 1e-9
 
 
 # ---------------------------------------------------------------------------
