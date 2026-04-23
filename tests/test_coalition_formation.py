@@ -136,10 +136,12 @@ class TestAgentVotes:
 class TestGenerateCompromiseSentences:
     def test_returns_correct_count(self):
         # Explanation: The LLM function should return exactly 'n' candidate sentences.
+        # Uses api_key=None to trigger offline fallback (no real API call).
         sentences = generate_compromise_sentences(
             "Plant trees to fight climate change.",
             "Switch to renewable energy.",
             n=5,
+            api_key=None,
         )
         assert len(sentences) == 5
 
@@ -149,6 +151,7 @@ class TestGenerateCompromiseSentences:
             "Plant trees to fight climate change.",
             "Switch to renewable energy.",
             n=3,
+            api_key=None,
         )
         assert all(isinstance(s, str) and len(s) > 0 for s in sentences)
 
@@ -157,18 +160,39 @@ class TestGenerateCompromiseSentences:
         sentences = generate_compromise_sentences(
             "Reduce emissions.",
             "Plant trees.",
+            api_key=None,
         )
         assert len(sentences) == 10
 
     def test_sentences_max_15_words(self):
-        # Explanation: As per the paper's constraints, the LLM should generate short sentences of <= 15 words.
+        # Explanation: As per the paper's constraints, sentences must have <= 15 words.
         sentences = generate_compromise_sentences(
             "Protect rainforests by reducing deforestation rates globally.",
             "Invest in solar and wind energy technology.",
             n=5,
+            api_key=None,
         )
         for s in sentences:
             assert len(s.split()) <= 15, f"Too long: '{s}'"
+
+    def test_gpt_path_called_with_api_key(self):
+        # Explanation: When api_key is provided, the GPT path must be invoked (not the fallback).
+        mock_response = type("R", (), {
+            "choices": [type("C", (), {
+                "message": type("M", (), {"content": "1) Save the planet now.\n2) Go green today.\n3) Act on climate."})()
+            })()]
+        })()
+        with patch("openai.OpenAI") as mock_openai:
+            mock_client = mock_openai.return_value
+            mock_client.chat.completions.create.return_value = mock_response
+            sentences = generate_compromise_sentences(
+                "Plant trees.",
+                "Use solar power.",
+                n=3,
+                api_key="sk-test-fake-key",
+            )
+        mock_client.chat.completions.create.assert_called_once()
+        assert len(sentences) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +228,7 @@ class TestCoalitionFormation:
     def test_single_agent_returns_itself(self):
         # Explanation: Edge case - a system with only 1 agent immediately halts, as that 1 agent represents 100% of the votes.
         sentence, agents = coalition_formation(
-            {0: "Protect the forests."}, "Do nothing."
+            {0: "Protect the forests."}, "Do nothing.", api_key=None
         )
         assert agents == [0]
         assert isinstance(sentence, str)
@@ -219,21 +243,21 @@ class TestCoalitionFormation:
             4: "Improve public transport to cut car use.",
         }
         sentence, agents = coalition_formation(
-            ideal, "Do nothing about climate change.", seed=0
+            ideal, "Do nothing about climate change.", seed=0, api_key=None
         )
         assert len(agents) >= math.ceil(len(ideal) / 2)
 
     def test_returned_agents_are_valid_indices(self):
         # Explanation: The final returned list of agents must contain valid IDs from the original input dictionary.
         ideal = {i: f"Policy proposal number {i}." for i in range(6)}
-        sentence, agents = coalition_formation(ideal, "Status quo.", seed=1)
+        sentence, agents = coalition_formation(ideal, "Status quo.", seed=1, api_key=None)
         assert all(a in ideal for a in agents)
 
     def test_compromise_is_string(self):
         # Explanation: The final output of the algorithm must be the actual compromise string text.
         ideal = {0: "Tax carbon heavily.", 1: "Subsidise green energy."}
         sentence, agents = coalition_formation(
-            ideal, "Do nothing.", majority_quota=0.51, seed=0
+            ideal, "Do nothing.", majority_quota=0.51, seed=0, api_key=None
         )
         assert isinstance(sentence, str) and len(sentence) > 0
 
@@ -254,20 +278,20 @@ class TestCoalitionFormation:
         ] * 2  # 20 agents
         ideal = {i: topics[i] for i in range(20)}
         sentence, agents = coalition_formation(
-            ideal, "Do nothing about climate change.", sigma=1.0, seed=77
+            ideal, "Do nothing about climate change.", sigma=1.0, seed=77, api_key=None
         )
         assert len(agents) >= 10
 
     def test_deterministic_reproducible(self):
         # Explanation: Ensures that if we provide the exact same random seed, the algorithm makes the exact same choices and yields identical results.
         ideal = {0: "Cut emissions.", 1: "Plant trees.", 2: "Use renewables."}
-        r1 = coalition_formation(ideal, "Do nothing.", seed=42)
-        r2 = coalition_formation(ideal, "Do nothing.", seed=42)
+        r1 = coalition_formation(ideal, "Do nothing.", seed=42, api_key=None)
+        r2 = coalition_formation(ideal, "Do nothing.", seed=42, api_key=None)
         assert r1[1] == r2[1]
 
     def test_empty_input(self):
         # Explanation: Edge case - 0 agents passed. The system should safely return the status quo and an empty list, not crash.
-        sentence, agents = coalition_formation({}, "Status quo remains.")
+        sentence, agents = coalition_formation({}, "Status quo remains.", api_key=None)
         assert sentence == "Status quo remains."
         assert len(agents) == 0
 
@@ -275,13 +299,13 @@ class TestCoalitionFormation:
         # Explanation: Error handling test - it is mathematically impossible to require a quota greater than 1.0 (100%), so it should raise an error.
         ideal = {0: "A", 1: "B"}
         with pytest.raises(ValueError):
-            coalition_formation(ideal, "Status quo", majority_quota=1.5)
+            coalition_formation(ideal, "Status quo", majority_quota=1.5, api_key=None)
 
     def test_invalid_alpha_raises_error(self):
         # Explanation: Error handling test - the alpha parameter dictates mediator behavior and is strictly restricted to -1, 0, or 1.
         ideal = {0: "A", 1: "B"}
         with pytest.raises(ValueError):
-            coalition_formation(ideal, "Status quo", alpha=5)
+            coalition_formation(ideal, "Status quo", alpha=5, api_key=None)
 
     def test_very_large_random_input_subset_property(self):
         # Explanation: Large property test - creates 100 random agents and verifies structural properties (subset validity, quota minimums) rather than specific text outputs.
@@ -291,9 +315,9 @@ class TestCoalitionFormation:
         ideal = {i: random.choice(topics) for i in range(100)}
 
         sentence, agents = coalition_formation(
-            ideal, "Status quo", majority_quota=0.6, seed=100
+            ideal, "Status quo", majority_quota=0.6, seed=100, api_key=None
         )
-        
+
         assert set(agents).issubset(set(ideal.keys()))
         assert len(agents) >= 60
         assert isinstance(sentence, str)

@@ -428,6 +428,7 @@ def coalition_formation(
     coalition_discipline: bool = False,
     max_iterations: int = 10_000,
     seed: Optional[int] = None,
+    api_key: Optional[str] = None,
 ) -> tuple[str, list[int]]:
     """Run the AI-mediated coalition formation algorithm in a textual metric space.
 
@@ -449,6 +450,8 @@ def coalition_formation(
         coalition_discipline (bool): Enforce whole-coalition voting.
         max_iterations (int): Safety cap on iterations.
         seed (Optional[int]): Random seed for reproducibility.
+        api_key (Optional[str]): OpenAI API key. Falls back to OPENAI_API_KEY env var,
+            then to template-based offline mode if neither is set.
 
     Returns:
         tuple[str, list[int]]:
@@ -574,7 +577,7 @@ def coalition_formation(
         target_emb = _weighted_avg(c_i["embedding"], size_i, c_j["embedding"], size_j)
 
         # (f) Generate compromise sentences via LLM mediator (Mediator-1, Section 4.2)
-        candidates = generate_compromise_sentences(c_i["sentence"], c_j["sentence"])
+        candidates = generate_compromise_sentences(c_i["sentence"], c_j["sentence"], api_key=api_key)
         logger.info("Generated %d candidate sentences.", len(candidates))
 
         # (g) Choose best sentence — argmin d_cos(embed(s), target)
