@@ -56,6 +56,15 @@ def _weighted_avg(v1: Vector, w1: float, v2: Vector, w2: float) -> Vector:
                       + (|C_j|/(|C_i|+|C_j|)) * d(p_j, x) ]
     In Euclidean (embedding) space the argmin reduces to the weighted mean.
 
+    Args:
+        v1 (Vector): The embedding vector of the first coalition's compromise sentence.
+        w1 (float): The weight of the first coalition (typically its size / number of agents).
+        v2 (Vector): The embedding vector of the second coalition's compromise sentence.
+        w2 (float): The weight of the second coalition (typically its size / number of agents).
+
+    Returns:
+        Vector: The size-weighted average embedding vector (centroid) of the two input vectors.
+
     >>> _weighted_avg([1.0, 0.0], 1, [0.0, 1.0], 1)
     [0.5, 0.5]
     >>> _weighted_avg([2.0, 0.0], 3, [0.0, 2.0], 1)
@@ -72,6 +81,13 @@ def _vector_sum(vectors: list[Vector], weights: list[float]) -> Vector:
         centroid(D) = argmin_x (1/n) * Σ |C_i| * d(x, p_i)
     In Euclidean space this is Σ(|C_i|*p_i) / n.
 
+    Args:
+        vectors (list[Vector]): A list of embedding vectors (e.g., the compromise points of various coalitions).
+        weights (list[float]): A list of numerical weights corresponding to each vector (e.g., the size of each coalition).
+
+    Returns:
+        Vector: A single vector representing the weighted sum of all input vectors.
+
     >>> _vector_sum([[1.0, 0.0], [0.0, 1.0]], [1.0, 1.0])
     [1.0, 1.0]
     """
@@ -81,7 +97,6 @@ def _vector_sum(vectors: list[Vector], weights: list[float]) -> Vector:
         for i in range(dim):
             result[i] += w * v[i]
     return result
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -144,7 +159,7 @@ def cosine_dissimilarity(v1: Vector, v2: Vector) -> float:
     if norm1 == 0.0 or norm2 == 0.0:
         return 0.0
     cos_sim = dot / (norm1 * norm2)
-    cos_sim = max(-1.0, min(1.0, cos_sim))  # clamp floating-point drift
+    cos_sim = max(-1.0, min(1.0, cos_sim))
     return math.sqrt(max(0.0, 2.0 - 2.0 * cos_sim))
 
 
@@ -211,6 +226,7 @@ def generate_compromise_sentences(
     sentence1: str,
     sentence2: str,
     n: int = 10,
+    api_key: str = None,
 ) -> list[str]:
     """Ask GPT-3.5-turbo to generate n sentences aggregating the two inputs.
 
@@ -239,17 +255,18 @@ def generate_compromise_sentences(
     True
     """
     import os  # noqa: PLC0415
+    actual_key = api_key or os.environ.get("OPENAI_API_KEY")
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not actual_key:
         logger.warning(
-            "OPENAI_API_KEY not set — using template-based fallback (Section 4.2 offline mode)."
+            "OPENAI_API_KEY not set and no api_key provided — using template-based fallback (Section 4.2 offline mode)."
         )
         return _fallback_compromise_sentences(sentence1, sentence2, n)
 
-    return _gpt_compromise_sentences(sentence1, sentence2, n)
+    return _gpt_compromise_sentences(sentence1, sentence2, n, actual_key)
 
 
-def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
+def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
     """Call GPT-3.5-turbo with the Mediator-1 prompt (Section 4.2, Option 1).
 
     Prompt: "Generate {n} possible different well-structured sentences that
@@ -258,8 +275,10 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[st
     Message: mediator role instruction (zero-shot chain-of-thought).
     """
     import openai  # noqa: PLC0415
+    import logging
+    logger = logging.getLogger(__name__)
 
-    client = openai.OpenAI()
+    client = openai.OpenAI(api_key=api_key)
 
     prompt = (
         f"Generate {n} possible different well-structured sentences that aggregate "
