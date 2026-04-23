@@ -3,6 +3,17 @@ import pytest
 from pref_voting.profiles import Profile
 from pref_voting.profiles_with_ties import ProfileWithTies
 
+
+@pytest.fixture(scope="session", autouse=True)
+def preload_sentence_model():
+    """Load the sentence-transformer model once for the entire test session.
+
+    Without this, the first test that calls embed_text pays the ~15s model load.
+    With session scope + autouse, the model is warm before any test runs.
+    """
+    from pref_voting.coalition_formation import _get_st_model
+    _get_st_model()
+
 @pytest.fixture
 def condorcet_cycle():
     return Profile([
