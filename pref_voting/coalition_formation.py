@@ -48,9 +48,7 @@ class _Coalition:
 @lru_cache(maxsize=1024)
 def embed_text(text: str) -> np.ndarray:
     """Embed a sentence into a 512-dimensional semantic vector (Section 4.1).
-
-    Results are cached — repeated calls with the same text are free.
-
+    
     Args:
         text (str): A natural-language sentence.
 
@@ -313,6 +311,19 @@ def coalition_formation(
     def meets_quota(c: _Coalition) -> bool:
         return len(c.agents) / n_agents >= majority_quota
 
+    def cast_votes(coalition: _Coalition, compromise: str) -> dict[int, bool]:
+        return {
+            a: agent_votes(ideal_sentences[a], compromise, status_quo, sigma)
+            for a in coalition.agents
+        }
+
+    def split(votes: dict[int, bool], all_agents: set[int], discipline: bool) -> tuple[set[int], set[int]]:
+        if discipline and sum(votes.values()) < math.ceil(len(all_agents) / 2):
+            return set(), set(all_agents)
+        yes = {a for a, v in votes.items() if v}
+        no  = {a for a, v in votes.items() if not v}
+        return yes, no
+
     # Trivial halt: singleton already satisfies quota
     for c in coalitions:
         if meets_quota(c):
@@ -354,21 +365,8 @@ def coalition_formation(
         logger.info("Compromise chosen: %r", compromise_sentence)
 
         # (f) Agents vote (Section 2.2)
-        def cast_votes(coalition: _Coalition) -> dict[int, bool]:
-            return {
-                a: agent_votes(ideal_sentences[a], compromise_sentence, status_quo, sigma)
-                for a in coalition.agents
-            }
-
-        def split(votes: dict[int, bool], all_agents: set[int], discipline: bool) -> tuple[set[int], set[int]]:
-            if discipline and sum(votes.values()) < math.ceil(len(all_agents) / 2):
-                return set(), set(all_agents)
-            yes = {a for a, v in votes.items() if v}
-            no  = {a for a, v in votes.items() if not v}
-            return yes, no
-
-        new_i, rem_i = split(cast_votes(c_i), c_i.agents, coalition_discipline)
-        new_j, rem_j = split(cast_votes(c_j), c_j.agents, coalition_discipline)
+        new_i, rem_i = split(cast_votes(c_i, compromise_sentence), c_i.agents, coalition_discipline)
+        new_j, rem_j = split(cast_votes(c_j, compromise_sentence), c_j.agents, coalition_discipline)
         new_agents = new_i | new_j
 
         # (g) Update coalition structure
