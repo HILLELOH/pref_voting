@@ -180,8 +180,8 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
         )
-    except openai.RateLimitError:
-        logger.warning("OpenAI quota exceeded — falling back to template-based offline mode.")
+    except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
+        logger.warning("OpenAI unavailable (%s) — falling back to template-based offline mode.", type(e).__name__)
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     return _parse_json_response(response.choices[0].message.content or "", n, sentence1, sentence2)
 
