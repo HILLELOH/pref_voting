@@ -386,3 +386,29 @@ def coalition_formation(
 
     winner = max(coalitions, key=lambda c: len(c.agents))
     return winner.sentence, sorted(winner.agents)
+
+
+
+if __name__=='__main__':
+    import dotenv
+    dotenv.load_dotenv()
+    # 20 agents on related topics must coalesce into a majority.
+    topics = [
+        "Plant trees globally.", "Ban fossil fuels immediately.",
+        "Invest in nuclear energy.", "Tax carbon emissions heavily.",
+        "Improve public transport networks.", "Subsidise electric vehicles now.",
+        "Reduce meat consumption worldwide.", "Install rooftop solar panels.",
+        "Protect existing rainforests legally.", "Develop carbon capture technologies.",
+    ] * 2
+    ideal = {i: topics[i] for i in range(20)}
+    logger.setLevel(logging.DEBUG)
+
+    sentence, agents = coalition_formation(
+        ideal, "Do nothing about climate change.", sigma=1.0, seed=77
+    )
+    print(f'sentece: {sentence}')
+    print(f'agents: {agents}')
+
+
+
+
