@@ -64,6 +64,7 @@ def embed_text(text: str) -> np.ndarray:
     >>> cosine_dissimilarity(v, v2) == 0.0
     True
     """
+    logger.debug("Computing embedding (cache miss) for: %.60r", text)
     raw = _get_st_model().encode(text, convert_to_numpy=True)
     padded = np.zeros(_EMBED_DIM)
     padded[:len(raw)] = raw
@@ -117,12 +118,16 @@ def agent_votes(ideal: str, proposal: str, status_quo: str, sigma: float = 0.0) 
     d_sq = cosine_dissimilarity(embed_text(ideal), embed_text(status_quo))
 
     if d_proposal <= d_sq:
+        logger.debug("agent_votes: d_prop=%.4f <= d_sq=%.4f → accept", d_proposal, d_sq)
         return True
     if sigma == 0.0:
+        logger.debug("agent_votes: d_prop=%.4f > d_sq=%.4f, sigma=0 → reject", d_proposal, d_sq)
         return False
 
     prob = min(1.0, math.sqrt(2.0 / math.pi) / sigma * math.exp(-d_proposal**2 / (2.0 * sigma**2)))
-    return bool(random.random() < prob)
+    result = bool(random.random() < prob)
+    logger.debug("agent_votes: d_prop=%.4f > d_sq=%.4f, prob=%.4f → %s", d_proposal, d_sq, prob, "accept" if result else "reject")
+    return result
 
 
 def generate_compromise_sentences(
@@ -246,7 +251,9 @@ def choose_best_sentence(candidates: list[str], target: np.ndarray) -> str:
     """
     if len(candidates) == 1:
         return candidates[0]
-    return min(candidates, key=lambda s: cosine_dissimilarity(embed_text(s), target))
+    best = min(candidates, key=lambda s: cosine_dissimilarity(embed_text(s), target))
+    logger.debug("choose_best_sentence: picked %r from %d candidates", best[:60], len(candidates))
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +331,8 @@ def coalition_formation(
         no  = {a for a, v in votes.items() if not v}
         return yes, no
 
+    logger.debug("Init: %d agents, %d singleton coalitions, quota=%.2f", n_agents, len(coalitions), majority_quota)
+
     # Trivial halt: singleton already satisfies quota
     for c in coalitions:
         if meets_quota(c):
@@ -345,6 +354,7 @@ def coalition_formation(
         probs = np.exp(alpha * (dists / (dists.max() or 1.0)))
         probs /= probs.sum()
         idx_i = int(np.random.choice(len(coalitions), p=probs))
+        logger.debug("Sampling: chose idx_i=%d (prob=%.4f, dist_to_centroid=%.4f)", idx_i, probs[idx_i], dists[idx_i])
 
         # (c) d_j = nearest coalition to d_i
         idx_j = min(
@@ -353,6 +363,9 @@ def coalition_formation(
         )
 
         c_i, c_j = coalitions[idx_i], coalitions[idx_j]
+        logger.debug("Selected pair: [%d] %d agents %r  vs  [%d] %d agents %r",
+                     idx_i, len(c_i.agents), c_i.sentence[:50],
+                     idx_j, len(c_j.agents), c_j.sentence[:50])
         size_i, size_j = float(len(c_i.agents)), float(len(c_j.agents))
 
         # (d) Compromise target = size-weighted average of p_i and p_j
@@ -368,6 +381,8 @@ def coalition_formation(
         new_i, rem_i = split(cast_votes(c_i, compromise_sentence), c_i.agents, coalition_discipline)
         new_j, rem_j = split(cast_votes(c_j, compromise_sentence), c_j.agents, coalition_discipline)
         new_agents = new_i | new_j
+        logger.debug("Votes: yes_i=%d rem_i=%d  yes_j=%d rem_j=%d  merged=%d",
+                     len(new_i), len(rem_i), len(new_j), len(rem_j), len(new_agents))
 
         # (g) Update coalition structure
         coalitions = [c for k, c in enumerate(coalitions) if k not in (idx_i, idx_j)]
@@ -378,6 +393,8 @@ def coalition_formation(
         if new_agents:
             coalitions.append(_Coalition(new_agents, compromise_sentence, compromise_emb))
 
+        logger.debug("Post-merge: %d coalitions, sizes=%s", len(coalitions), sorted([len(c.agents) for c in coalitions], reverse=True))
+
         # (h) Check halting condition
         for c in coalitions:
             if meets_quota(c):
@@ -386,28 +403,6 @@ def coalition_formation(
 
     winner = max(coalitions, key=lambda c: len(c.agents))
     return winner.sentence, sorted(winner.agents)
-
-
-
-if __name__=='__main__':
-    import dotenv
-    dotenv.load_dotenv()
-    # 20 agents on related topics must coalesce into a majority.
-    topics = [
-        "Plant trees globally.", "Ban fossil fuels immediately.",
-        "Invest in nuclear energy.", "Tax carbon emissions heavily.",
-        "Improve public transport networks.", "Subsidise electric vehicles now.",
-        "Reduce meat consumption worldwide.", "Install rooftop solar panels.",
-        "Protect existing rainforests legally.", "Develop carbon capture technologies.",
-    ] * 2
-    ideal = {i: topics[i] for i in range(20)}
-    logger.setLevel(logging.DEBUG)
-
-    sentence, agents = coalition_formation(
-        ideal, "Do nothing about climate change.", sigma=1.0, seed=77
-    )
-    print(f'sentece: {sentence}')
-    print(f'agents: {agents}')
 
 
 
