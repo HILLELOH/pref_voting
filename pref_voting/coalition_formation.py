@@ -178,6 +178,8 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
         "You are a mediator finding agreed wording from two sentences. "
         "Respond only with valid JSON. No extra text."
     )
+    logger.info("Calling GPT-3.5-turbo for %d compromise candidates between %r and %r",
+                n, sentence1[:50], sentence2[:50])
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -188,7 +190,9 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
     except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
         logger.warning("OpenAI unavailable (%s) — falling back to template-based offline mode.", type(e).__name__)
         return _fallback_compromise_sentences(sentence1, sentence2, n)
-    return _parse_json_response(response.choices[0].message.content or "", n, sentence1, sentence2)
+    raw = response.choices[0].message.content or ""
+    logger.debug("GPT raw response (%d chars): %.200r", len(raw), raw)
+    return _parse_json_response(raw, n, sentence1, sentence2)
 
 
 def _fallback_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
@@ -198,6 +202,7 @@ def _fallback_compromise_sentences(sentence1: str, sentence2: str, n: int) -> li
     >>> len(sents) == 5 and all(len(s.split()) <= 15 for s in sents)
     True
     """
+    logger.debug("Fallback compromise: combining %r  +  %r  (n=%d)", sentence1[:50], sentence2[:50], n)
     w1, w2 = sentence1.rstrip(".!?"), sentence2.rstrip(".!?")
     templates = [
         f"{w1} and {w2}.",
@@ -251,8 +256,12 @@ def choose_best_sentence(candidates: list[str], target: np.ndarray) -> str:
     """
     if len(candidates) == 1:
         return candidates[0]
-    best = min(candidates, key=lambda s: cosine_dissimilarity(embed_text(s), target))
-    logger.debug("choose_best_sentence: picked %r from %d candidates", best[:60], len(candidates))
+    scored = [(cosine_dissimilarity(embed_text(s), target), s) for s in candidates]
+    scored.sort(key=lambda x: x[0])
+    logger.debug("choose_best_sentence: %d candidates ranked:", len(scored))
+    for rank, (dist, s) in enumerate(scored):
+        logger.debug("  [%d] dist=%.4f  %r", rank, dist, s[:70])
+    best = scored[0][1]
     return best
 
 
@@ -331,11 +340,15 @@ def coalition_formation(
         no  = {a for a, v in votes.items() if not v}
         return yes, no
 
-    logger.debug("Init: %d agents, %d singleton coalitions, quota=%.2f", n_agents, len(coalitions), majority_quota)
+    logger.info("Init: %d agents, quota=%.2f, sigma=%.2f, alpha=%.2f, discipline=%s",
+                n_agents, majority_quota, sigma, alpha, coalition_discipline)
+    for i, s in ideal_sentences.items():
+        logger.debug("  Agent %d: %r", i, s)
 
     # Trivial halt: singleton already satisfies quota
     for c in coalitions:
         if meets_quota(c):
+            logger.info("Trivial halt: singleton agent set %s already meets quota.", sorted(c.agents))
             return c.sentence, sorted(c.agents)
 
     for iteration in range(1, max_iterations + 1):
@@ -361,6 +374,8 @@ def coalition_formation(
             (k for k in range(len(coalitions)) if k != idx_i),
             key=lambda k: cosine_dissimilarity(coalitions[k].embedding, coalitions[idx_i].embedding),
         )
+        logger.debug("Nearest pair: idx_j=%d (dist=%.4f)",
+                     idx_j, cosine_dissimilarity(coalitions[idx_i].embedding, coalitions[idx_j].embedding))
 
         c_i, c_j = coalitions[idx_i], coalitions[idx_j]
         logger.debug("Selected pair: [%d] %d agents %r  vs  [%d] %d agents %r",
@@ -378,11 +393,21 @@ def coalition_formation(
         logger.info("Compromise chosen: %r", compromise_sentence)
 
         # (f) Agents vote (Section 2.2)
-        new_i, rem_i = split(cast_votes(c_i, compromise_sentence), c_i.agents, coalition_discipline)
-        new_j, rem_j = split(cast_votes(c_j, compromise_sentence), c_j.agents, coalition_discipline)
+        votes_i = cast_votes(c_i, compromise_sentence)
+        votes_j = cast_votes(c_j, compromise_sentence)
+        logger.debug("Votes coalition_i (agents %s): %s",
+                     sorted(c_i.agents),
+                     {a: ("Y" if v else "N") for a, v in votes_i.items()})
+        logger.debug("Votes coalition_j (agents %s): %s",
+                     sorted(c_j.agents),
+                     {a: ("Y" if v else "N") for a, v in votes_j.items()})
+        new_i, rem_i = split(votes_i, c_i.agents, coalition_discipline)
+        new_j, rem_j = split(votes_j, c_j.agents, coalition_discipline)
         new_agents = new_i | new_j
-        logger.debug("Votes: yes_i=%d rem_i=%d  yes_j=%d rem_j=%d  merged=%d",
-                     len(new_i), len(rem_i), len(new_j), len(rem_j), len(new_agents))
+        logger.info("Vote result: yes_i=%d/%d  yes_j=%d/%d  merged=%d",
+                    len(new_i), len(c_i.agents), len(new_j), len(c_j.agents), len(new_agents))
+        if not new_agents:
+            logger.warning("No agents accepted compromise at iteration %d — coalition unchanged.", iteration)
 
         # (g) Update coalition structure
         coalitions = [c for k, c in enumerate(coalitions) if k not in (idx_i, idx_j)]
@@ -401,9 +426,32 @@ def coalition_formation(
                 logger.info("Halting at iteration %d: coalition size %d.", iteration, len(c.agents))
                 return c.sentence, sorted(c.agents)
 
+    logger.warning("Max iterations (%d) reached without majority. Returning largest coalition (%d/%d agents).",
+                   max_iterations, len(max(coalitions, key=lambda c: len(c.agents)).agents), n_agents)
     winner = max(coalitions, key=lambda c: len(c.agents))
     return winner.sentence, sorted(winner.agents)
 
+
+if __name__=='__main__':
+    import dotenv
+    dotenv.load_dotenv()
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s | %(message)s")
+    logger.setLevel(logging.DEBUG)
+    # 20 agents on related topics must coalesce into a majority.
+    topics = [
+        "Plant trees globally.", "Ban fossil fuels immediately.",
+        "Invest in nuclear energy.", "Tax carbon emissions heavily.",
+        "Improve public transport networks.", "Subsidise electric vehicles now.",
+        "Reduce meat consumption worldwide.", "Install rooftop solar panels.",
+        "Protect existing rainforests legally.", "Develop carbon capture technologies.",
+    ] * 2
+    ideal = {i: topics[i] for i in range(20)}
+
+    sentence, agents = coalition_formation(
+        ideal, "Do nothing about climate change.", sigma=1.0, seed=77
+    )
+    print(f'sentece: {sentence}')
+    print(f'agents: {agents}')
 
 
 
