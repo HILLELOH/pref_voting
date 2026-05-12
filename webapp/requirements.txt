@@ -3,4 +3,4 @@ python-dotenv
 openai
 sentence-transformers
 numpy
-pref_voting @ file://../
+pref_voting @ git+https://github.com/HILLELOH/pref_voting.git@web-app-coalition-formation

@@ -7,15 +7,16 @@
     <p class="subtitle">
         Given agents with differing policy positions, this algorithm finds a majority coalition
         that agrees on an AI-generated compromise.
-        <a href="https://arxiv.org/pdf/2512.05983" target="_blank">Read the paper →</a>
+        <a href="https://arxiv.org/pdf/2512.05983" target="_blank">Read the paper</a>
     </p>
     <div class="algo-summary">
         <strong>How it works:</strong>
-        Each iteration, the two agents with the most differing positions are selected.
-        GPT generates candidate compromise sentences between them.
-        Each agent votes to accept if the proposal is closer to their ideal than the current status quo
-        (measured by cosine dissimilarity of sentence embeddings).
-        If a majority accepts, the algorithm halts with the winning sentence and coalition.
+        Each document is mapped to a 512-dimensional metric space using semantic embeddings.
+        A mediator identifies two coalitions based on their size-weighted distance from the system's centroid
+        and uses an LLM to generate candidate compromise sentences.
+        The proposal that minimizes the cosine dissimilarity from the groups' weighted mathematical average is selected.
+        Agents vote to join the new coalition if this proposal is closer to their ideal than the fixed status quo.
+        This iterative process repeats until a single coalition representing a majority converges on a final consensus.
     </div>
 </section>
 
@@ -73,7 +74,7 @@
                     value="{{ form_data.sigma if form_data else '0' }}"
                     step="0.1" min="0">
             </div>
-            <div>
+            <!-- <div>
                 <label>
                     Seed
                     <span class="hint">(for reproducibility, optional)</span>
@@ -81,7 +82,7 @@
                 <input type="number" name="seed"
                     value="{{ form_data.seed if form_data else '' }}"
                     placeholder="optional">
-            </div>
+            </div> -->
             <div>
                 <label>
                     OpenAI API Key
