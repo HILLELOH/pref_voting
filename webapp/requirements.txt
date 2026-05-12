@@ -1,0 +1,6 @@
+flask
+python-dotenv
+openai
+sentence-transformers
+numpy
+pref_voting @ file://../

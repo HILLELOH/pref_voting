@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}About{% endblock %}
+{% block content %}
+
+<h1>About</h1>
+
+<section class="card">
+    <h2>Hillel Ohayon</h2>
+    <p>Computer Science student at Ariel University.</p>
+    <p style="margin-top:0.5rem">
+        <a href="https://github.com/HILLELOH/" target="_blank">GitHub →</a>
+    </p>
+</section>
+
+<section class="card">
+    <h2>About this project</h2>
+    <p>
+        This website demonstrates the coalition formation algorithm from
+        <a href="https://arxiv.org/pdf/2512.05983" target="_blank">
+            "AI-Generated Compromises for Coalition Formation"
+        </a>
+        by Eyal Briman, Ehud Shapiro, and Nimrod Talmon (2024).
+    </p>
+    <p style="margin-top:0.75rem">
+        The algorithm was implemented and this demo was built by <strong>Hillel Ohayon</strong>
+        for the course "Programming Research Algorithms" at Ariel University.
+    </p>
+</section>
+
+<section class="card">
+    <h2>Algorithm Summary</h2>
+    <p>
+        Given a set of agents with different policy positions and a status quo,
+        the algorithm iteratively proposes AI-generated compromise sentences.
+        Agents vote using a simple rational rule: accept a proposal if it is closer
+        to their ideal position than the current status quo (measured by cosine
+        dissimilarity of sentence embeddings). The process repeats until a majority
+        coalition is formed, guaranteeing that all coalition members genuinely prefer
+        the outcome over the status quo.
+    </p>
+</section>
+
+{% endblock %}

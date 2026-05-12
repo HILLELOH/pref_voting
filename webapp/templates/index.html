@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Demo{% endblock %}
+{% block content %}
+
+<section class="hero">
+    <h1>Coalition Formation Demo</h1>
+    <p class="subtitle">
+        Given agents with differing policy positions, this algorithm finds a majority coalition
+        that agrees on an AI-generated compromise.
+        <a href="https://arxiv.org/pdf/2512.05983" target="_blank">Read the paper →</a>
+    </p>
+    <div class="algo-summary">
+        <strong>How it works:</strong>
+        Each iteration, the two agents with the most differing positions are selected.
+        GPT generates candidate compromise sentences between them.
+        Each agent votes to accept if the proposal is closer to their ideal than the current status quo
+        (measured by cosine dissimilarity of sentence embeddings).
+        If a majority accepts, the algorithm halts with the winning sentence and coalition.
+    </div>
+</section>
+
+{% if errors %}
+<div class="errors">
+    {% for e in errors %}<p>⚠ {{ e }}</p>{% endfor %}
+</div>
+{% endif %}
+
+<form method="POST" action="/run" id="main-form">
+
+    <section class="card">
+        <h2>Status Quo</h2>
+        <p class="hint">The current policy that agents want to improve on.</p>
+        <textarea name="status_quo" rows="2"
+            placeholder="e.g. Do nothing about climate change."
+            required>{{ form_data.status_quo if form_data else '' }}</textarea>
+    </section>
+
+    <section class="card">
+        <h2>Agents</h2>
+        <p class="hint">
+            Each agent has a name and an ideal policy sentence.
+            Sentences of 5–15 words work best.
+        </p>
+
+        <div class="random-fill">
+            <label>Number of agents for random fill:</label>
+            <input type="number" id="random-n" value="5" min="1" max="20">
+            <button type="button" id="btn-random">Fill Random</button>
+        </div>
+
+        <div id="agents-list"></div>
+        <button type="button" id="btn-add-agent">+ Add Agent</button>
+    </section>
+
+    <details class="card advanced">
+        <summary>Advanced Options</summary>
+        <div class="advanced-grid">
+            <div>
+                <label>
+                    Majority quota
+                    <span class="hint">(fraction, e.g. 0.5 = 50%)</span>
+                </label>
+                <input type="number" name="majority_quota"
+                    value="{{ form_data.majority_quota if form_data else '0.5' }}"
+                    step="0.01" min="0.01" max="1.0">
+            </div>
+            <div>
+                <label>
+                    Sigma
+                    <span class="hint">(noise level, 0 = fully deterministic)</span>
+                </label>
+                <input type="number" name="sigma"
+                    value="{{ form_data.sigma if form_data else '0' }}"
+                    step="0.1" min="0">
+            </div>
+            <div>
+                <label>
+                    Seed
+                    <span class="hint">(for reproducibility, optional)</span>
+                </label>
+                <input type="number" name="seed"
+                    value="{{ form_data.seed if form_data else '' }}"
+                    placeholder="optional">
+            </div>
+            <div>
+                <label>
+                    OpenAI API Key
+                    <span class="hint">(optional if set in .env)</span>
+                </label>
+                <input type="password" name="api_key" placeholder="sk-...">
+            </div>
+        </div>
+    </details>
+
+    <button type="submit" class="btn-submit">Run Coalition Formation →</button>
+</form>
+
+<script type="application/json" id="prev-data">
+{"names": {{ (prev_names | tojson) if prev_names else '[]' }}, "sentences": {{ (prev_sentences | tojson) if prev_sentences else '[]' }}}
+</script>
+<script>
+const _prev = JSON.parse(document.getElementById('prev-data').textContent);
+const prevNames = _prev.names;
+const prevSentences = _prev.sentences;
+
+function esc(s) {
+    return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function agentRow(name, sentence) {
+    return `<div class="agent-row">
+        <div class="agent-fields">
+            <input type="text" name="agent_name" placeholder="Agent name"
+                value="${esc(name)}" required>
+            <textarea name="agent_sentence" rows="2"
+                placeholder="Ideal policy sentence..." required>${esc(sentence)}</textarea>
+        </div>
+        <button type="button" class="btn-remove" onclick="this.closest('.agent-row').remove()">✕</button>
+    </div>`;
+}
+
+function renderAgents(agents) {
+    const list = document.getElementById('agents-list');
+    list.innerHTML = agents.map(a => agentRow(a.name, a.sentence)).join('');
+}
+
+if (prevNames.length > 0) {
+    renderAgents(prevNames.map((n, i) => ({ name: n, sentence: prevSentences[i] || '' })));
+} else {
+    renderAgents([
+        { name: 'Agent 1', sentence: '' },
+        { name: 'Agent 2', sentence: '' },
+        { name: 'Agent 3', sentence: '' },
+    ]);
+}
+
+document.getElementById('btn-add-agent').onclick = () => {
+    document.getElementById('agents-list').insertAdjacentHTML('beforeend', agentRow('', ''));
+};
+
+document.getElementById('btn-random').onclick = async () => {
+    const n = document.getElementById('random-n').value;
+    const res = await fetch(`/random-input?n=${n}`);
+    const data = await res.json();
+    renderAgents(data.agents);
+    document.querySelector('textarea[name="status_quo"]').value = data.status_quo;
+};
+</script>
+
+{% endblock %}

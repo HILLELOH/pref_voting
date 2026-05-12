@@ -1,0 +1,63 @@
+`{% extends "base.html" %}
+{% block title %}Result{% endblock %}
+{% block content %}
+
+<h1>Result</h1>
+
+<section class="card result-highlight">
+    <h2>Winning Compromise Sentence</h2>
+    <blockquote>{{ result_sentence }}</blockquote>
+    <p>
+        <strong>Coalition:</strong> {{ coalition_names | join(', ') }}<br>
+        <strong>Coalition size:</strong>
+        {{ coalition_size }} / {{ total_agents }} agents ({{ coalition_pct }}%)<br>
+        <strong>Required majority:</strong> {{ majority_quota_pct }}% —
+        <span class="badge-ok">✓ Satisfied</span>
+    </p>
+</section>
+
+<section class="card">
+    <h2>Input</h2>
+    <p><strong>Status Quo:</strong> {{ status_quo }}</p>
+</section>
+
+<section class="card">
+    <h2>Guaranteed Properties</h2>
+    <p class="hint">
+        The algorithm guarantees a <strong>majority coalition</strong>: at least
+        {{ majority_quota_pct }}% of agents prefer the proposal over the status quo.<br>
+        Each agent in the coalition satisfies
+        <em>d(ideal → proposal)</em> &lt; <em>d(ideal → status quo)</em>,
+        meaning the proposal is closer to their ideal than the status quo.
+        Distance = cosine dissimilarity of sentence embeddings (range [0, 2]).
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>Ideal sentence</th>
+                <th>d(ideal → proposal)</th>
+                <th>d(ideal → status quo)</th>
+                <th>Voted</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in proof_rows %}
+            <tr class="{{ 'row-yes' if row.voted_yes else 'row-no' }}">
+                <td>{{ row.name }}</td>
+                <td>{{ row.ideal }}</td>
+                <td>{{ row.d_proposal }}</td>
+                <td>{{ row.d_sq }}</td>
+                <td>{{ '✓ YES' if row.voted_yes else '✗ NO' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<div class="actions">
+    <a href="/" class="btn">← New run</a>
+    <a href="/logs" class="btn btn-secondary">View logs</a>
+</div>
+
+{% endblock %}
