@@ -35,7 +35,7 @@ Open `http://localhost:5000`.
 
 ## Routes
 
-- `/` — main input form
-- `/run` — POST, runs the algorithm
-- `/about` — algorithm description
-- `/logs` — view server logs
+- `/` - main input form
+- `/run` - POST, runs the algorithm
+- `/about` - algorithm description
+- `/logs` - view server logs

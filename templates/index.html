@@ -1,5 +1,56 @@
 {% extends "base.html" %}
 {% block title %}Demo{% endblock %}
+
+{% block modal %}
+<div id="setup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:white; border-radius:10px; max-width:560px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative;">
+    <h2 style="margin-bottom:0.5rem; color:#16213e;">Before you start</h2>
+    <p style="color:#555; margin-bottom:1.5rem; font-size:0.95rem;">
+      This app uses an LLM to generate compromise sentences. Choose one option below.
+    </p>
+
+    <div style="border:2px solid #4a90e2; border-radius:8px; padding:1.2rem; margin-bottom:1rem;">
+      <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+        <span style="background:#4a90e2; color:white; font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:600;">RECOMMENDED</span>
+        <strong>Ollama — local, free, unlimited</strong>
+      </div>
+      <p style="font-size:0.9rem; color:#444; margin-bottom:0.75rem;">Runs entirely on your machine. No API key needed. One-time setup:</p>
+      <pre style="background:#f5f7fa; border-radius:6px; padding:0.75rem; font-size:0.85rem; overflow-x:auto;">brew install ollama
+ollama pull llama3.2
+brew services start ollama</pre>
+    </div>
+
+    <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:1.5rem;">
+      <strong>Google AI Studio API key — free but rate-limited</strong>
+      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0;">
+        Get a key at <a href="https://aistudio.google.com/api-keys" target="_blank">aistudio.google.com/api-keys</a>, then paste it in <em>Advanced Options → API Key</em> below.
+      </p>
+      <p style="font-size:0.85rem; color:#e05c00;">
+        ⚠ Free tier: 15 req/min, 1500 req/day. Large runs may hit the limit.
+      </p>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <label style="font-size:0.85rem; color:#666; display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+        <input type="checkbox" id="setup-dont-show"> Don't show again
+      </label>
+      <button onclick="closeSetup()" style="background:#16213e; color:white; border:none; border-radius:6px; padding:0.6rem 1.4rem; cursor:pointer; font-size:0.95rem;">Got it</button>
+    </div>
+  </div>
+</div>
+<script>
+function closeSetup() {
+    if (document.getElementById('setup-dont-show').checked) {
+        localStorage.setItem('setup-seen', '1');
+    }
+    document.getElementById('setup-overlay').style.display = 'none';
+}
+if (!localStorage.getItem('setup-seen')) {
+    document.getElementById('setup-overlay').style.display = 'flex';
+}
+</script>
+{% endblock %}
+
 {% block content %}
 
 <section class="hero">
@@ -85,10 +136,10 @@
             </div> -->
             <div>
                 <label>
-                    OpenAI API Key
-                    <span class="hint">(optional if set in .env)</span>
+                    Google AI Studio API Key
+                    <span class="hint">(optional - leave empty to use Ollama)</span>
                 </label>
-                <input type="password" name="api_key" placeholder="sk-...">
+                <input type="password" name="api_key" placeholder="AIza...">
             </div>
         </div>
     </details>

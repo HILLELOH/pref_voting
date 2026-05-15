@@ -72,7 +72,7 @@ def embed_text(text: str) -> np.ndarray:
 
 
 def cosine_dissimilarity(v1: np.ndarray, v2: np.ndarray) -> float:
-    """sqrt(2 - 2*cos(theta)) — Section 4.1, footnote 6. Returns values in [0, 2].
+    """sqrt(2 - 2*cos(theta)) - Section 4.1, footnote 6. Returns values in [0, 2].
 
     Args:
         v1 (np.ndarray): First embedding vector.
@@ -156,9 +156,9 @@ def generate_compromise_sentences(
     True
     """
     import os
-    actual_key = api_key or os.environ.get("OPENAI_API_KEY")
+    actual_key = api_key or os.environ.get("GOOGLE_API_KEY")
     if not actual_key:
-        logger.warning("OPENAI_API_KEY not set — using template-based fallback.")
+        logger.warning("GOOGLE_API_KEY not set - using template-based fallback.")
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     return _gpt_compromise_sentences(sentence1, sentence2, n, actual_key)
 
@@ -166,7 +166,20 @@ def generate_compromise_sentences(
 def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
     """Call GPT-3.5-turbo with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
     import openai
-    client = openai.OpenAI(api_key=api_key)
+    if api_key:
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            max_retries=6,
+        )
+        model = "gemini-2.0-flash"
+    else:
+        client = openai.OpenAI(
+            api_key="ollama",
+            base_url="http://localhost:11434/v1",
+            max_retries=6,
+        )
+        model = "llama3.2"
     prompt = (
         f'Sentence 1: "{sentence1}"\n'
         f'Sentence 2: "{sentence2}"\n\n'
@@ -182,13 +195,12 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
                 n, sentence1[:50], sentence2[:50])
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             temperature=0.75,
-            response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
         )
     except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
-        logger.warning("OpenAI unavailable (%s) — falling back to template-based offline mode.", type(e).__name__)
+        logger.warning("Gemini unavailable (%s: %s) - falling back to template-based offline mode.", type(e).__name__, e)
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     raw = response.choices[0].message.content or ""
     logger.debug("GPT raw response (%d chars): %.200r", len(raw), raw)
@@ -407,7 +419,7 @@ def coalition_formation(
         logger.info("Vote result: yes_i=%d/%d  yes_j=%d/%d  merged=%d",
                     len(new_i), len(c_i.agents), len(new_j), len(c_j.agents), len(new_agents))
         if not new_agents:
-            logger.warning("No agents accepted compromise at iteration %d — coalition unchanged.", iteration)
+            logger.warning("No agents accepted compromise at iteration %d - coalition unchanged.", iteration)
 
         # (g) Update coalition structure
         coalitions = [c for k, c in enumerate(coalitions) if k not in (idx_i, idx_j)]

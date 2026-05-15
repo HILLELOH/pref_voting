@@ -9,7 +9,7 @@ from flask import Flask, render_template, request, jsonify
 
 # Allow importing pref_voting from parent directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent / ".env")
 
 LOG_FILE = Path(__file__).parent / "logs" / "app.log"
 LOG_FILE.parent.mkdir(exist_ok=True)
@@ -65,7 +65,7 @@ def run():
 
     api_key = (
         request.form.get("api_key", "").strip()
-        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
         or None
     )
 
@@ -222,4 +222,4 @@ def about():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5001)
