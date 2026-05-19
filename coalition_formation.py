@@ -136,15 +136,15 @@ def generate_compromise_sentences(
     n: int = 10,
     api_key: str = None,
 ) -> list[str]:
-    """Ask GPT-3.5-turbo to generate n sentences aggregating the two inputs (Section 4.2).
+    """Ask an LLM to generate n sentences aggregating the two inputs (Section 4.2).
 
-    Falls back to template-based combination when OPENAI_API_KEY is not set.
+    Falls back to template-based combination when OPENROUTER_API_KEY is not set.
 
     Args:
         sentence1 (str): Compromise sentence of the first coalition.
         sentence2 (str): Compromise sentence of the second coalition.
         n (int): Number of candidate sentences to generate.
-        api_key (str): OpenAI API key (overrides OPENAI_API_KEY env var).
+        api_key (str): OpenRouter API key (overrides OPENROUTER_API_KEY env var).
 
     Returns:
         list[str]: n candidate compromise sentences.
@@ -156,23 +156,23 @@ def generate_compromise_sentences(
     True
     """
     import os
-    actual_key = api_key or os.environ.get("GOOGLE_API_KEY")
+    actual_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not actual_key:
-        logger.warning("GOOGLE_API_KEY not set - using template-based fallback.")
+        logger.warning("OPENROUTER_API_KEY not set - using template-based fallback.")
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     return _gpt_compromise_sentences(sentence1, sentence2, n, actual_key)
 
 
 def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
-    """Call GPT-3.5-turbo with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
+    """Call LLM via OpenRouter with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
     import openai
     if api_key:
         client = openai.OpenAI(
             api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            base_url="https://openrouter.ai/api/v1",
             max_retries=6,
         )
-        model = "gemini-2.0-flash"
+        model = "meta-llama/llama-3.2-3b-instruct:free"
     else:
         client = openai.OpenAI(
             api_key="ollama",
@@ -191,7 +191,7 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
         "You are a mediator finding agreed wording from two sentences. "
         "Respond only with valid JSON. No extra text."
     )
-    logger.info("Calling GPT-3.5-turbo for %d compromise candidates between %r and %r",
+    logger.info("Calling LLM for %d compromise candidates between %r and %r",
                 n, sentence1[:50], sentence2[:50])
     try:
         response = client.chat.completions.create(
@@ -200,7 +200,7 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
         )
     except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
-        logger.warning("Gemini unavailable (%s: %s) - falling back to template-based offline mode.", type(e).__name__, e)
+        logger.warning("LLM unavailable (%s: %s) - falling back to template-based offline mode.", type(e).__name__, e)
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     raw = response.choices[0].message.content or ""
     logger.debug("GPT raw response (%d chars): %.200r", len(raw), raw)

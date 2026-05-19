@@ -52,7 +52,7 @@ SAMPLE_SENTENCES = [
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", show_modal=True)
 
 
 @app.route("/run", methods=["POST"])
@@ -65,7 +65,7 @@ def run():
 
     api_key = (
         request.form.get("api_key", "").strip()
-        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("OPENROUTER_API_KEY")
         or None
     )
 
@@ -120,6 +120,7 @@ def run():
             form_data=request.form,
             prev_names=names,
             prev_sentences=sentences,
+            show_modal=False,
         )
 
     ideal = {i: a["sentence"] for i, a in agents.items()}
@@ -149,6 +150,7 @@ def run():
             form_data=request.form,
             prev_names=names,
             prev_sentences=sentences,
+            show_modal=False,
         )
 
     logger.info("Result sentence: %r", result_sentence)

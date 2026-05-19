@@ -2,8 +2,9 @@
 {% block title %}Demo{% endblock %}
 
 {% block modal %}
+{% if show_modal %}
 <div id="setup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
-  <div style="background:white; border-radius:10px; max-width:560px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative;">
+  <div style="background:white; border-radius:10px; max-width:580px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative;">
     <h2 style="margin-bottom:0.5rem; color:#16213e;">Before you start</h2>
     <p style="color:#555; margin-bottom:1.5rem; font-size:0.95rem;">
       This app uses an LLM to generate compromise sentences. Choose one option below.
@@ -21,12 +22,18 @@ brew services start ollama</pre>
     </div>
 
     <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:1.5rem;">
-      <strong>Google AI Studio API key — free but rate-limited</strong>
-      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0;">
-        Get a key at <a href="https://aistudio.google.com/api-keys" target="_blank">aistudio.google.com/api-keys</a>, then paste it in <em>Advanced Options → API Key</em> below.
+      <strong>OpenRouter API key — cloud LLM, free tier available</strong>
+      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.75rem;">
+        How to get a key:
       </p>
+      <ol style="font-size:0.9rem; color:#444; margin:0 0 0.75rem 1.2rem; padding:0; line-height:1.7;">
+        <li>Go to <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> and sign up (free).</li>
+        <li>Open <strong>Keys</strong> in the left sidebar (or go to <a href="https://openrouter.ai/settings/keys" target="_blank">openrouter.ai/settings/keys</a>).</li>
+        <li>Click <strong>Create Key</strong>, give it a name, copy the key.</li>
+        <li>Paste it in <em>Advanced Options → OpenRouter API Key</em> below.</li>
+      </ol>
       <p style="font-size:0.85rem; color:#e05c00;">
-        ⚠ Free tier: 15 req/min, 1500 req/day. Large runs may hit the limit.
+        ⚠ Free models are rate-limited. Paid credits unlock faster models.
       </p>
     </div>
 
@@ -49,6 +56,7 @@ if (!localStorage.getItem('setup-seen')) {
     document.getElementById('setup-overlay').style.display = 'flex';
 }
 </script>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -136,10 +144,10 @@ if (!localStorage.getItem('setup-seen')) {
             </div> -->
             <div>
                 <label>
-                    Google AI Studio API Key
+                    OpenRouter API Key
                     <span class="hint">(optional - leave empty to use Ollama)</span>
                 </label>
-                <input type="password" name="api_key" placeholder="AIza...">
+                <input type="password" name="api_key" placeholder="sk-or-...">
             </div>
         </div>
     </details>
