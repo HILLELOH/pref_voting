@@ -138,7 +138,7 @@ def generate_compromise_sentences(
 ) -> list[str]:
     """Ask an LLM to generate n sentences aggregating the two inputs (Section 4.2).
 
-    Falls back to template-based combination when OPENROUTER_API_KEY is not set.
+    Priority: OpenRouter API key → Ollama (local) → llama-cpp (auto-download) → template fallback.
 
     Args:
         sentence1 (str): Compromise sentence of the first coalition.
@@ -157,29 +157,20 @@ def generate_compromise_sentences(
     """
     import os
     actual_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-    if not actual_key:
-        logger.warning("OPENROUTER_API_KEY not set - using template-based fallback.")
-        return _fallback_compromise_sentences(sentence1, sentence2, n)
-    return _gpt_compromise_sentences(sentence1, sentence2, n, actual_key)
+    if actual_key:
+        return _openrouter_compromise_sentences(sentence1, sentence2, n, actual_key)
+    try:
+        return _ollama_compromise_sentences(sentence1, sentence2, n)
+    except Exception as e:
+        logger.info("Ollama not available (%s: %s) — trying llama-cpp.", type(e).__name__, e)
+    try:
+        return _llama_cpp_compromise_sentences(sentence1, sentence2, n)
+    except Exception as e:
+        logger.warning("llama-cpp failed (%s: %s) — using template fallback.", type(e).__name__, e)
+    return _fallback_compromise_sentences(sentence1, sentence2, n)
 
 
-def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
-    """Call LLM via OpenRouter with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
-    import openai
-    if api_key:
-        client = openai.OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
-            max_retries=6,
-        )
-        model = "meta-llama/llama-3.2-3b-instruct:free"
-    else:
-        client = openai.OpenAI(
-            api_key="ollama",
-            base_url="http://localhost:11434/v1",
-            max_retries=6,
-        )
-        model = "llama3.2"
+def _build_mediator_prompt(sentence1: str, sentence2: str, n: int) -> tuple[str, str]:
     prompt = (
         f'Sentence 1: "{sentence1}"\n'
         f'Sentence 2: "{sentence2}"\n\n'
@@ -191,19 +182,87 @@ def _gpt_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: s
         "You are a mediator finding agreed wording from two sentences. "
         "Respond only with valid JSON. No extra text."
     )
-    logger.info("Calling LLM for %d compromise candidates between %r and %r",
+    return system_msg, prompt
+
+
+def _openrouter_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
+    """Call LLM via OpenRouter with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
+    import openai
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        max_retries=6,
+    )
+    system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
+    logger.info("Calling OpenRouter for %d compromise candidates between %r and %r",
                 n, sentence1[:50], sentence2[:50])
     try:
         response = client.chat.completions.create(
-            model=model,
+            model="meta-llama/llama-3.2-3b-instruct:free",
             temperature=0.75,
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
         )
     except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
-        logger.warning("LLM unavailable (%s: %s) - falling back to template-based offline mode.", type(e).__name__, e)
+        logger.warning("OpenRouter unavailable (%s: %s) — falling back.", type(e).__name__, e)
         return _fallback_compromise_sentences(sentence1, sentence2, n)
     raw = response.choices[0].message.content or ""
-    logger.debug("GPT raw response (%d chars): %.200r", len(raw), raw)
+    logger.debug("OpenRouter raw response (%d chars): %.200r", len(raw), raw)
+    return _parse_json_response(raw, n, sentence1, sentence2)
+
+
+def _ollama_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
+    """Call local Ollama server. Raises on connection failure."""
+    import openai
+    client = openai.OpenAI(
+        api_key="ollama",
+        base_url="http://localhost:11434/v1",
+        max_retries=1,
+    )
+    system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
+    logger.info("Calling Ollama for %d compromise candidates between %r and %r",
+                n, sentence1[:50], sentence2[:50])
+    response = client.chat.completions.create(
+        model="llama3.2",
+        temperature=0.75,
+        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
+    )
+    raw = response.choices[0].message.content or ""
+    logger.debug("Ollama raw response (%d chars): %.200r", len(raw), raw)
+    return _parse_json_response(raw, n, sentence1, sentence2)
+
+
+_llama_cpp_model = None
+
+
+def _get_llama_cpp_model():
+    global _llama_cpp_model
+    if _llama_cpp_model is None:
+        from llama_cpp import Llama
+        logger.info("Loading Qwen2.5-0.5B via llama-cpp (downloads automatically on first run)…")
+        _llama_cpp_model = Llama.from_pretrained(
+            repo_id="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+            filename="*q4_k_m.gguf",
+            verbose=False,
+            n_ctx=2048,
+        )
+    return _llama_cpp_model
+
+
+def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
+    """Generate compromises using local llama-cpp model (Qwen2.5-0.5B). Raises if unavailable."""
+    llm = _get_llama_cpp_model()
+    system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
+    logger.info("Calling llama-cpp for %d compromise candidates between %r and %r",
+                n, sentence1[:50], sentence2[:50])
+    response = llm.create_chat_completion(
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=512,
+    )
+    raw = response["choices"][0]["message"]["content"] or ""
+    logger.debug("llama-cpp raw response (%d chars): %.200r", len(raw), raw)
     return _parse_json_response(raw, n, sentence1, sentence2)
 
 

@@ -3,4 +3,6 @@ python-dotenv
 openai
 sentence-transformers
 numpy
+llama-cpp-python
+huggingface_hub
 # pref_voting @ git+https://github.com/HILLELOH/pref_voting.git@web-app-coalition-formation # not in the ssh version, because it is not in the main branch yet

@@ -10,31 +10,40 @@
       This app uses an LLM to generate compromise sentences. Choose one option below.
     </p>
 
-    <div style="border:2px solid #4a90e2; border-radius:8px; padding:1.2rem; margin-bottom:1rem;">
+    <p style="font-size:0.85rem; color:#666; margin-bottom:1rem;">
+      Priority: <strong>OpenRouter key</strong> → <strong>Ollama</strong> → <strong>built-in model</strong> → template fallback.
+    </p>
+
+    <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:0.75rem;">
+      <strong>Option 1 — OpenRouter API key (cloud, free tier)</strong>
+      <ol style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.5rem 1.2rem; padding:0; line-height:1.7;">
+        <li>Sign up at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>.</li>
+        <li>Go to <strong>Settings → Keys</strong> and click <strong>Create Key</strong>.</li>
+        <li>Copy the key (starts with <code>sk-or-</code>).</li>
+        <li>Paste it in <em>Advanced Options → OpenRouter API Key</em> below.</li>
+      </ol>
+      <p style="font-size:0.85rem; color:#e05c00; margin:0;">⚠ Free models are rate-limited. Paid credits unlock faster models.</p>
+    </div>
+
+    <div style="border:2px solid #4a90e2; border-radius:8px; padding:1.2rem; margin-bottom:0.75rem;">
       <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
         <span style="background:#4a90e2; color:white; font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:600;">RECOMMENDED</span>
-        <strong>Ollama — local, free, unlimited</strong>
+        <strong>Option 2 — Ollama (local, free, unlimited)</strong>
       </div>
-      <p style="font-size:0.9rem; color:#444; margin-bottom:0.75rem;">Runs entirely on your machine. No API key needed. One-time setup:</p>
+      <p style="font-size:0.9rem; color:#444; margin-bottom:0.75rem;">No API key. Runs on your machine. One-time setup:</p>
       <pre style="background:#f5f7fa; border-radius:6px; padding:0.75rem; font-size:0.85rem; overflow-x:auto;">brew install ollama
 ollama pull llama3.2
 brew services start ollama</pre>
     </div>
 
     <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:1.5rem;">
-      <strong>OpenRouter API key — cloud LLM, free tier available</strong>
-      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.75rem;">
-        How to get a key:
+      <strong>Option 3 — Built-in model (no setup, ~400 MB download)</strong>
+      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.5rem;">
+        If Ollama isn't running and no API key is set, the app automatically downloads
+        <strong>Qwen2.5-0.5B</strong> (~398 MB) on the first run and runs it locally.
+        Slower than Ollama, but fully offline with zero configuration.
       </p>
-      <ol style="font-size:0.9rem; color:#444; margin:0 0 0.75rem 1.2rem; padding:0; line-height:1.7;">
-        <li>Go to <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> and sign up (free).</li>
-        <li>Open <strong>Keys</strong> in the left sidebar (or go to <a href="https://openrouter.ai/settings/keys" target="_blank">openrouter.ai/settings/keys</a>).</li>
-        <li>Click <strong>Create Key</strong>, give it a name, copy the key.</li>
-        <li>Paste it in <em>Advanced Options → OpenRouter API Key</em> below.</li>
-      </ol>
-      <p style="font-size:0.85rem; color:#e05c00;">
-        ⚠ Free models are rate-limited. Paid credits unlock faster models.
-      </p>
+      <p style="font-size:0.85rem; color:#444; margin:0;">Requires: <code>pip install llama-cpp-python huggingface_hub</code></p>
     </div>
 
     <div style="display:flex; align-items:center; justify-content:space-between;">
