@@ -254,12 +254,14 @@ def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> l
     system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
     logger.info("Calling llama-cpp for %d compromise candidates between %r and %r",
                 n, sentence1[:50], sentence2[:50])
+    # response_format forces valid JSON via GBNF grammar — prevents small-model parse failures
     response = llm.create_chat_completion(
         messages=[
             {"role": "system", "content": system_msg},
             {"role": "user", "content": prompt},
         ],
         max_tokens=512,
+        response_format={"type": "json_object"},
     )
     raw = response["choices"][0]["message"]["content"] or ""
     logger.debug("llama-cpp raw response (%d chars): %.200r", len(raw), raw)
