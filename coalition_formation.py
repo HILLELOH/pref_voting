@@ -155,14 +155,17 @@ def generate_compromise_sentences(
     >>> all(isinstance(s, str) and len(s) > 0 for s in sentences)
     True
     """
+    global _ollama_available
     import os
     actual_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if actual_key:
         return _openrouter_compromise_sentences(sentence1, sentence2, n, actual_key)
-    try:
-        return _ollama_compromise_sentences(sentence1, sentence2, n)
-    except Exception as e:
-        logger.info("Ollama not available (%s: %s) — trying llama-cpp.", type(e).__name__, e)
+    if _ollama_available:
+        try:
+            return _ollama_compromise_sentences(sentence1, sentence2, n)
+        except Exception as e:
+            logger.info("Ollama not available (%s: %s) — skipping for rest of run.", type(e).__name__, e)
+            _ollama_available = False
     try:
         return _llama_cpp_compromise_sentences(sentence1, sentence2, n)
     except Exception as e:
@@ -224,6 +227,8 @@ def _ollama_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list
     response = client.chat.completions.create(
         model="llama3.2",
         temperature=0.75,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
         messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
     )
     raw = response.choices[0].message.content or ""
@@ -232,6 +237,7 @@ def _ollama_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list
 
 
 _llama_cpp_model = None
+_ollama_available = True  # flipped to False on first connection failure, resets per process
 
 
 def _get_llama_cpp_model():
@@ -289,7 +295,7 @@ def _fallback_compromise_sentences(sentence1: str, sentence2: str, n: int) -> li
         f"Our plan: {w1.lower()} and {w2.lower()}.",
         f"Let us {w1.lower()} and also {w2.lower()}.",
     ]
-    results = [" ".join(t.split()[:15]) for t in templates[:n]]
+    results = [t for t in templates[:n]]
     while len(results) < n:
         results.append(results[-1])
     return results
@@ -299,19 +305,68 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
     """Parse GPT JSON response into a list of n compromise strings.
 
     Expected format: {"compromises": ["s1", "s2", ...]}
-    Falls back to template sentences on any parse error.
+    Also handles bare arrays, alternate key names, and truncated responses.
+    Falls back to template sentences only if all strategies fail.
 
     >>> _parse_json_response('{"compromises": ["Hello world", "Goodbye world"]}', 2, "a", "b")
     ['Hello world', 'Goodbye world']
     >>> len(_parse_json_response('{"compromises": ["Only one."]}', 3, "a", "b"))
     3
+    >>> _parse_json_response('["Hello world", "Goodbye world"]', 2, "a", "b")
+    ['Hello world', 'Goodbye world']
     """
-    try:
-        data = json.loads(text)
-        results = [str(s).strip() for s in data["compromises"] if str(s).strip()]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        logger.warning("Failed to parse GPT JSON response: falling back to template mode.")
+    import re
+
+    cleaned = text.strip()
+    cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+    cleaned = re.sub(r'\s*```$', '', cleaned)
+    cleaned = cleaned.strip()
+
+    def _extract(data) -> list[str] | None:
+        if isinstance(data, list):
+            return [str(s).strip() for s in data if str(s).strip()] or None
+        if isinstance(data, dict):
+            for key in ("compromises", "sentences", "results", "suggestions"):
+                if key in data and isinstance(data[key], list):
+                    return [str(s).strip() for s in data[key] if str(s).strip()] or None
+        return None
+
+    attempts = [cleaned]
+
+    # JSON object anywhere in text
+    m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if m:
+        attempts.append(m.group(0))
+
+    # JSON array anywhere in text
+    m = re.search(r'\[.*\]', cleaned, re.DOTALL)
+    if m:
+        attempts.append(m.group(0))
+
+    # Truncated object: {"compromises": [...  → close it
+    for pfx in ('{"compromises":[', '{"compromises": ['):
+        idx = cleaned.find(pfx)
+        if idx >= 0:
+            attempts.append(cleaned[idx:].rstrip().rstrip(',') + ']}')
+
+    # Truncated bare array: ["s1", "s2", ...  → close it
+    idx = cleaned.find('[')
+    if idx >= 0:
+        attempts.append(cleaned[idx:].rstrip().rstrip(',') + ']')
+
+    results = None
+    for attempt in attempts:
+        try:
+            results = _extract(json.loads(attempt))
+            if results:
+                break
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if not results:
+        logger.warning("Failed to parse GPT JSON response (cleaned=%r): falling back to template mode.", cleaned[:200])
         return _fallback_compromise_sentences(sentence1, sentence2, n)
+
     if len(results) < n:
         results += [results[-1]] * (n - len(results))
     return results[:n]
