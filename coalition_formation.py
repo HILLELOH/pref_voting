@@ -133,12 +133,12 @@ def agent_votes(ideal: str, proposal: str, status_quo: str, sigma: float = 0.0) 
 def generate_compromise_sentences(
     sentence1: str,
     sentence2: str,
-    n: int = 10,
+    n: int = 2,
     api_key: str = None,
 ) -> list[str]:
     """Ask an LLM to generate n sentences aggregating the two inputs (Section 4.2).
 
-    Priority: OpenRouter API key → Ollama (local) → llama-cpp (auto-download) → template fallback.
+    Priority: OpenRouter API key → Qwen (llama-cpp locally)
 
     Args:
         sentence1 (str): Compromise sentence of the first coalition.
@@ -148,43 +148,38 @@ def generate_compromise_sentences(
 
     Returns:
         list[str]: n candidate compromise sentences.
-
-    >>> sentences = generate_compromise_sentences("Plant trees.", "Use solar power.", n=3)
-    >>> len(sentences) == 3
-    True
-    >>> all(isinstance(s, str) and len(s) > 0 for s in sentences)
-    True
     """
-    global _ollama_available
     import os
     actual_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    
+    # Try OpenRouter first if API key available
     if actual_key:
         return _openrouter_compromise_sentences(sentence1, sentence2, n, actual_key)
-    if _ollama_available:
-        try:
-            return _ollama_compromise_sentences(sentence1, sentence2, n)
-        except Exception as e:
-            logger.info("Ollama not available (%s: %s) — skipping for rest of run.", type(e).__name__, e)
-            _ollama_available = False
-    try:
-        return _llama_cpp_compromise_sentences(sentence1, sentence2, n)
-    except Exception as e:
-        logger.warning("llama-cpp failed (%s: %s) — using template fallback.", type(e).__name__, e)
-    return _fallback_compromise_sentences(sentence1, sentence2, n)
-
+    
+    # Use Qwen locally via llama-cpp (no fallback)
+    return _llama_cpp_compromise_sentences(sentence1, sentence2, n)
 
 def _build_mediator_prompt(sentence1: str, sentence2: str, n: int) -> tuple[str, str]:
     prompt = (
-        f'Sentence 1: "{sentence1}"\n'
-        f'Sentence 2: "{sentence2}"\n\n'
-        f"Generate {n} distinct sentences that aggregate both. "
-        f"Each sentence must have at most 15 words. "
-        f'Return JSON: {{"compromises": ["sentence1", "sentence2", ...]}}'
+        f'Input Sentence 1: "{sentence1}"\n'
+        f'Input Sentence 2: "{sentence2}"\n\n'
+        f"Task:\n"
+        f"Generate exactly {n} distinct, creative compromise sentences that bridge the core ideas of both inputs.\n\n"
+        f"Strict Constraints:\n"
+        f"1. Each sentence must be at most 15 words.\n"
+        f"2. High Syntactic & Lexical Diversity: Do NOT reuse the same phrasing, structure, or prominent vocabulary from the input sentences. Express the middle-ground using completely different words and a fresh sentence structure.\n"
+        f"3. Do not just mix or concatenate pieces of the two sentences.\n"
+        f"4. Maintain the original language of the input sentences.\n\n"
+        f'Return ONLY valid JSON in this format: {{"compromises": ["sentence1", "sentence2", ...]}}'
     )
+    
     system_msg = (
-        "You are a mediator finding agreed wording from two sentences. "
-        "Respond only with valid JSON. No extra text."
+        "You are an expert mediator AI. Your job is to find conceptual common ground between two opposing opinions. "
+        "Crucially, your generations must sound entirely fresh—use unique vocabulary, different idioms, and distinct sentence structures "
+        "so that they do not look superficially similar to either input. "
+        "Respond strictly with valid JSON. No markdown wrappers (like ```json), no conversational filler."
     )
+    
     return system_msg, prompt
 
 
@@ -213,54 +208,29 @@ def _openrouter_compromise_sentences(sentence1: str, sentence2: str, n: int, api
     return _parse_json_response(raw, n, sentence1, sentence2)
 
 
-def _ollama_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
-    """Call local Ollama server. Raises on connection failure."""
-    import openai
-    client = openai.OpenAI(
-        api_key="ollama",
-        base_url="http://localhost:11434/v1",
-        max_retries=1,
-    )
-    system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
-    logger.info("Calling Ollama for %d compromise candidates between %r and %r",
-                n, sentence1[:50], sentence2[:50])
-    response = client.chat.completions.create(
-        model="llama3.2",
-        temperature=0.75,
-        max_tokens=2048,
-        response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
-    )
-    raw = response.choices[0].message.content or ""
-    logger.debug("Ollama raw response (%d chars): %.200r", len(raw), raw)
-    return _parse_json_response(raw, n, sentence1, sentence2)
-
-
 _llama_cpp_model = None
-_ollama_available = True  # flipped to False on first connection failure, resets per process
 
 
 def _get_llama_cpp_model():
     global _llama_cpp_model
     if _llama_cpp_model is None:
+        import os
         from llama_cpp import Llama
-        logger.info("Loading Qwen2.5-0.5B via llama-cpp (downloads automatically on first run)…")
-        _llama_cpp_model = Llama.from_pretrained(
-            repo_id="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
-            filename="*q4_k_m.gguf",
+        logger.info("Loading Qwen2.5-0.5B from local file via llama-cpp…")
+        model_path = os.path.join(os.path.dirname(__file__), "models", "qwen2.5-0.5b-instruct-q3_k_m.gguf")
+        logger.debug("Model path: %s", model_path)
+        _llama_cpp_model = Llama(
+            model_path=model_path,
             verbose=False,
-            n_ctx=2048,
+            n_ctx=1024,
         )
     return _llama_cpp_model
 
-
 def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
-    """Generate compromises using local llama-cpp model (Qwen2.5-0.5B). Raises if unavailable."""
     llm = _get_llama_cpp_model()
     system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
     logger.info("Calling llama-cpp for %d compromise candidates between %r and %r",
                 n, sentence1[:50], sentence2[:50])
-    # response_format forces valid JSON via GBNF grammar — prevents small-model parse failures
     response = llm.create_chat_completion(
         messages=[
             {"role": "system", "content": system_msg},
@@ -270,35 +240,9 @@ def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> l
         response_format={"type": "json_object"},
     )
     raw = response["choices"][0]["message"]["content"] or ""
+    logger.info("RAW QWEN OUTPUT: %s", raw)  # ← ADD THIS LINE
     logger.debug("llama-cpp raw response (%d chars): %.200r", len(raw), raw)
     return _parse_json_response(raw, n, sentence1, sentence2)
-
-
-def _fallback_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
-    """Template-based compromise sentences for offline use.
-
-    >>> sents = _fallback_compromise_sentences("Cut emissions now.", "Plant more trees.", 5)
-    >>> len(sents) == 5 and all(len(s.split()) <= 15 for s in sents)
-    True
-    """
-    logger.debug("Fallback compromise: combining %r  +  %r  (n=%d)", sentence1[:50], sentence2[:50], n)
-    w1, w2 = sentence1.rstrip(".!?"), sentence2.rstrip(".!?")
-    templates = [
-        f"{w1} and {w2}.",
-        f"We should {w1.lower()} while also working to {w2.lower()}.",
-        f"Both {w1.lower()} and {w2.lower()} are essential.",
-        f"To address our goals: {w1.lower()} and {w2.lower()}.",
-        f"Combine efforts to {w1.lower()} and {w2.lower()}.",
-        f"{w1} alongside {w2}.",
-        f"Support {w1.lower()} and promote {w2.lower()}.",
-        f"Together we must {w1.lower()} and {w2.lower()}.",
-        f"Our plan: {w1.lower()} and {w2.lower()}.",
-        f"Let us {w1.lower()} and also {w2.lower()}.",
-    ]
-    results = [t for t in templates[:n]]
-    while len(results) < n:
-        results.append(results[-1])
-    return results
 
 
 def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> list[str]:
@@ -372,24 +316,71 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
     return results[:n]
 
 
-def choose_best_sentence(candidates: list[str], target: np.ndarray) -> str:
-    """Return the candidate whose embedding is closest to target (Section 4.1).
+def choose_best_sentence(
+    candidates: list[str],
+    target: np.ndarray,
+    original_sentences: list[str] = None,
+    diversity_weight: float = 0.35,
+) -> str:
+    """Return the candidate closest to target while penalizing similarity to originals (Section 4.1).
+
+    Scoring formula:
+        composite_score = dist_to_target + diversity_weight * similarity_penalty
+    
+    where similarity_penalty = max(0, 1.0 - min_distance_to_original)
+
+    This prefers compromises that are both:
+      (1) Semantically close to the centroid of the two coalitions
+      (2) Distinct from the original coalition ideal sentences
+    
+    Prevents the algorithm from selecting an unchanged ideal as the "compromise."
 
     Args:
         candidates (list[str]): Candidate sentences from the LLM mediator.
         target (np.ndarray): Weighted-average embedding of the two coalition points.
+        original_sentences (list[str]): Original coalition sentences [c_i.sentence, c_j.sentence].
+                                       If None, uses pure distance minimization.
+        diversity_weight (float): Weight of diversity penalty in [0, 1]. 
+                                Default 0.35 balances centroid closeness with distinctness.
 
     Returns:
         str: The best candidate sentence.
     """
     if len(candidates) == 1:
         return candidates[0]
-    scored = [(cosine_dissimilarity(embed_text(s), target), s) for s in candidates]
-    scored.sort(key=lambda x: x[0])
+    
+    scored = []
+    for s in candidates:
+        s_emb = embed_text(s)
+        dist_to_target = cosine_dissimilarity(s_emb, target)
+        
+        # If original sentences provided, penalize similarity to them
+        if original_sentences and len(original_sentences) > 0:
+            min_dist_to_original = min(
+                cosine_dissimilarity(s_emb, embed_text(orig))
+                for orig in original_sentences
+            )
+            # Penalty: 1.0 if identical (dist ≈ 0), 0.0 if very different (dist > 1.0)
+            similarity_penalty = max(0.0, 1.0 - min_dist_to_original)
+            composite_score = dist_to_target + diversity_weight * similarity_penalty
+            scored.append((dist_to_target, composite_score, similarity_penalty, s))
+        else:
+            scored.append((dist_to_target, dist_to_target, None, s))
+    
+    # Sort by composite score (or pure distance if no originals)
+    scored.sort(key=lambda x: x[1])
+    
     logger.debug("choose_best_sentence: %d candidates ranked:", len(scored))
-    for rank, (dist, s) in enumerate(scored):
-        logger.debug("  [%d] dist=%.4f  %r", rank, dist, s[:70])
-    best = scored[0][1]
+    for rank, (dist_target, composite, penalty, s) in enumerate(scored):
+        if penalty is not None:
+            logger.debug(
+                "  [%d] dist_target=%.4f  diversity_penalty=%.4f  composite=%.4f  %r",
+                rank, dist_target, penalty, composite, s[:70]
+            )
+        else:
+            logger.debug("  [%d] dist=%.4f  %r", rank, dist_target, s[:70])
+    
+    best = scored[0][3]
     return best
 
 
@@ -434,6 +425,19 @@ def coalition_formation(
     >>> agents
     [0]
     """
+
+    from pathlib import Path
+
+    # Define the path to your file
+    file_path = Path("logs/app.log")
+
+    # Check if the file exists, then delete it
+    if file_path.is_file():
+        file_path.unlink()
+        print(f"Successfully deleted {file_path}")
+    else:
+        print(f"The file {file_path} does not exist.")
+
     if not 0.0 <= majority_quota <= 1.0:
         raise ValueError(f"majority_quota must be in [0, 1], got {majority_quota}")
     if not -1.0 <= alpha <= 1.0:
@@ -580,6 +584,3 @@ if __name__=='__main__':
     )
     print(f'sentece: {sentence}')
     print(f'agents: {agents}')
-
-
-

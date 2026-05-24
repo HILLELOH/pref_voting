@@ -135,8 +135,8 @@ def run():
 
     try:
         result_sentence, coalition_ids = coalition_formation(
-            ideal,
-            status_quo,
+            ideal_sentences=ideal,
+            status_quo=status_quo,
             majority_quota=majority_quota,
             sigma=sigma,
             seed=seed,
