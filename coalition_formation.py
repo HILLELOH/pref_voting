@@ -99,6 +99,20 @@ def _max_consecutive_common_words(text: str, reference: str) -> int:
     return max_run
 
 
+def _trim_to_max_words(text: str, max_words: int = 15) -> str:
+    """Truncate to max_words words, ending at last complete sentence if possible."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    trimmed = ' '.join(words[:max_words])
+    # Try to end at a sentence boundary within the trimmed text
+    for sep in ('. ', '! ', '? '):
+        idx = trimmed.rfind(sep)
+        if idx > 0:
+            return trimmed[:idx + 1]
+    return trimmed.rstrip(',;') + '.'
+
+
 def _is_valid_compromise(candidate: str, all_ideals: list, max_common: int = 2) -> bool:
     """Return True if candidate shares no more than max_common consecutive words with any ideal."""
     for ideal in all_ideals:
@@ -146,11 +160,13 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
     return [sentence1, sentence2][:n]
 
 
-def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2) -> list[str]:
+def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> list[str]:
     """Call local Qwen2.5-0.5B for compromise generation."""
     logger.info(f"Calling Qwen for {n} compromise candidates...")
 
-    llm = _get_qwen_model()
+    _own_llm = llm is None
+    if _own_llm:
+        llm = _get_qwen_model()
     try:
         prompt = (
             f'Two agents disagree on policy:\n'
@@ -192,7 +208,8 @@ def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2) -> list[str]:
         logger.info(f"Compromise(s): {filtered}")
         return filtered
     finally:
-        del llm
+        if _own_llm:
+            del llm
 
 
 # ============================================================================
@@ -259,93 +276,82 @@ def run_coalition_formation(
     winning_coalition = None
     winning_sentence = None
 
-    while True:
-        iteration += 1
-        logger.info(f"--- Iteration {iteration}  (coalitions: {len(coalitions)}) ---")
+    llm = _get_qwen_model()
+    try:
+        while True:
+            iteration += 1
+            logger.info(f"--- Iteration {iteration}  (coalitions: {len(coalitions)}) ---")
 
-        if seed is not None:
-            random.seed(seed + iteration)
+            if seed is not None:
+                random.seed(seed + iteration)
 
-        # Pick 2 distinct coalitions to try to merge
-        if len(coalitions) < 2:
-            # Only one coalition left — it's the winner
-            winning_coalition = coalitions[0]
-            winning_sentence = winning_coalition["representative"]
-            break
-
-        ci, cj = random.sample(range(len(coalitions)), 2)
-        coal_i = coalitions[ci]
-        coal_j = coalitions[cj]
-
-        rep_i = coal_i["representative"]
-        rep_j = coal_j["representative"]
-
-        # Generate compromise between the two coalition representatives
-        candidates = _call_qwen_local(rep_i, rep_j, n=2)
-
-        valid = [c for c in candidates if _is_valid_compromise(c, all_ideals)]
-        if valid:
-            proposal = valid[0]
-        elif candidates:
-            proposal = min(
-                candidates,
-                key=lambda c: max(_max_consecutive_common_words(c, ideal) for ideal in all_ideals),
-            )
-            logger.warning(f"No candidate passed overlap filter, using least-overlap: {proposal!r}")
-        else:
-            logger.warning("Compromise generation failed, skipping merge this iteration")
-            if iteration > n_agents * 3:
+            if len(coalitions) < 2:
+                winning_coalition = coalitions[0]
+                winning_sentence = winning_coalition["representative"]
                 break
-            continue
 
-        # Each coalition votes internally: strict majority of its members must accept
-        def coalition_accepts(members: list) -> tuple:
-            yes = sum(1 for idx in members if agents[idx].vote(proposal, status_quo)[0])
-            return yes, len(members)
+            ci, cj = random.sample(range(len(coalitions)), 2)
+            coal_i = coalitions[ci]
+            coal_j = coalitions[cj]
 
-        yes_i, total_i = coalition_accepts(coal_i["members"])
-        yes_j, total_j = coalition_accepts(coal_j["members"])
+            candidates = _call_qwen_local(coal_i["representative"], coal_j["representative"], n=2, llm=llm)
 
-        merged_count = total_i + total_j
-        logger.info(
-            f"Vote result: yes_i={yes_i}/{total_i}  yes_j={yes_j}/{total_j}  "
-            f"merged={merged_count}"
-        )
+            valid = [c for c in candidates if _is_valid_compromise(c, all_ideals)]
+            if valid:
+                proposal = _trim_to_max_words(valid[0])
+            elif candidates:
+                proposal = _trim_to_max_words(min(
+                    candidates,
+                    key=lambda c: max(_max_consecutive_common_words(c, ideal) for ideal in all_ideals),
+                ))
+                logger.warning(f"No candidate passed overlap filter, using least-overlap: {proposal!r}")
+            else:
+                logger.warning("Compromise generation failed, skipping merge this iteration")
+                if iteration > n_agents * 3:
+                    break
+                continue
 
-        # Both coalitions must have strict majority acceptance
-        i_accepts = yes_i / total_i > 0.5
-        j_accepts = yes_j / total_j > 0.5
+            def coalition_accepts(members: list) -> tuple:
+                yes = sum(1 for idx in members if agents[idx].vote(proposal, status_quo)[0])
+                return yes, len(members)
 
-        if i_accepts and j_accepts:
-            merged = {
-                "members": coal_i["members"] + coal_j["members"],
-                "representative": proposal,
-            }
-            # Remove old coalitions (higher index first to preserve lower index)
-            for idx in sorted([ci, cj], reverse=True):
-                coalitions.pop(idx)
-            coalitions.append(merged)
+            yes_i, total_i = coalition_accepts(coal_i["members"])
+            yes_j, total_j = coalition_accepts(coal_j["members"])
+            merged_count = total_i + total_j
 
-            logger.info(f"Merged → coalition of {merged_count} agents, rep: '{proposal}'")
-
-            # Check if merged coalition satisfies majority_quota
-            if merged_count / n_agents >= majority_quota:
-                winning_coalition = merged
-                winning_sentence = proposal
-                logger.info(f"Majority reached: {merged_count}/{n_agents} >= {majority_quota}")
-                break
-        else:
             logger.info(
-                f"Merge rejected: i_accepts={i_accepts}, j_accepts={j_accepts}"
+                f"Vote result: yes_i={yes_i}/{total_i}  yes_j={yes_j}/{total_j}  "
+                f"merged={merged_count}"
             )
 
-        # Safety valve
-        if iteration > n_agents * 5:
-            logger.warning("Max iterations reached")
-            # Pick largest coalition as winner
-            winning_coalition = max(coalitions, key=lambda c: len(c["members"]))
-            winning_sentence = winning_coalition["representative"]
-            break
+            i_accepts = yes_i / total_i > 0.5
+            j_accepts = yes_j / total_j > 0.5
+
+            if i_accepts and j_accepts:
+                merged = {
+                    "members": coal_i["members"] + coal_j["members"],
+                    "representative": proposal,
+                }
+                for idx in sorted([ci, cj], reverse=True):
+                    coalitions.pop(idx)
+                coalitions.append(merged)
+                logger.info(f"Merged → coalition of {merged_count} agents, rep: '{proposal}'")
+
+                if merged_count / n_agents >= majority_quota:
+                    winning_coalition = merged
+                    winning_sentence = proposal
+                    logger.info(f"Majority reached: {merged_count}/{n_agents} >= {majority_quota}")
+                    break
+            else:
+                logger.info(f"Merge rejected: i_accepts={i_accepts}, j_accepts={j_accepts}")
+
+            if iteration > n_agents * 5:
+                logger.warning("Max iterations reached")
+                winning_coalition = max(coalitions, key=lambda c: len(c["members"]))
+                winning_sentence = winning_coalition["representative"]
+                break
+    finally:
+        del llm
 
     # Final full-vote of ALL agents on winning sentence for the proof table
     if winning_coalition is None:

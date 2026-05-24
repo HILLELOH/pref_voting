@@ -175,6 +175,11 @@ def run():
         _jobs[job_id] = {"status": "processing"}
 
     def _worker():
+        # Clear log before each run so /logs shows only the current run
+        try:
+            open(LOG_PATH, 'w').close()
+        except OSError:
+            pass
         try:
             from coalition_formation import run_coalition_formation
             result = run_coalition_formation(
