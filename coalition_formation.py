@@ -53,12 +53,16 @@ def _get_qwen_model():
         )
 
     logger.info(f"Loading Qwen2.5-0.5B from {model_path}…")
-    return Llama(
-        model_path=model_path,
-        n_ctx=2048,
-        n_threads=4,
-        verbose=False,
-    )
+    try:
+        return Llama(
+            model_path=model_path,
+            n_ctx=2048,
+            n_threads=4,
+            verbose=False,
+        )
+    except Exception as e:
+        logger.error(f"Llama() constructor failed: {e}", exc_info=True)
+        raise
 
 
 # ============================================================================

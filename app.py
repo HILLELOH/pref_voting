@@ -4,18 +4,30 @@ Flask web application for AI-mediated coalition formation
 
 import logging
 import os
+import sys
 from flask import Flask, render_template, request, jsonify
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "app.log")
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
 _fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-_file_handler = logging.FileHandler(LOG_PATH)
+
+
+class _FlushFileHandler(logging.FileHandler):
+    """File handler that flushes after every record — survives hard process kills."""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+
+_file_handler = _FlushFileHandler(LOG_PATH)
 _file_handler.setFormatter(_fmt)
 _stream_handler = logging.StreamHandler()
 _stream_handler.setFormatter(_fmt)
 
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
+
+logging.info(f"App starting. Python: {sys.executable}  cwd: {os.getcwd()}")
 
 app = Flask(__name__)
 
