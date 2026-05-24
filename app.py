@@ -62,7 +62,7 @@ def random_input():
     status_quo_options = [
         "Continue current energy policy with minor adjustments.",
         "Maintain existing environmental regulations as they are.",
-        "No major policy changes; focus on voluntary industry action.",
+        "No major policy changes, focus on voluntary industry action.",
         "Keep current carbon targets without new enforcement mechanisms.",
     ]
     status_quo = random.choice(status_quo_options)
@@ -80,7 +80,7 @@ def run():
         majority_quota = float(request.form.get("majority_quota", 0.5))
 
         agents_info = [
-            {"name": n, "sentence": s}
+            {"name": n, "ideal": s}
             for n, s in zip(names, sentences)
             if n.strip() and s.strip()
         ]
@@ -103,7 +103,7 @@ def run():
         proof_rows = [
             {
                 "name": a["name"],
-                "ideal": a["sentence"],
+                "ideal": a["ideal"],
                 "d_proposal": round(votes_by_name.get(a["name"], {}).get("d_proposal", 0), 4),
                 "d_sq": round(votes_by_name.get(a["name"], {}).get("d_status_quo", 0), 4),
                 "voted_yes": a["name"] in coalition_names,

@@ -153,7 +153,7 @@ class Agent:
         d_proposal = _cosine_dissimilarity(self.ideal_embedding, proposal_embedding)
         d_status_quo = _cosine_dissimilarity(self.ideal_embedding, status_quo_embedding)
         
-        voted = d_proposal <= d_status_quo
+        voted = d_proposal < d_status_quo
         logger.info(
             f"   {self.name}: d(ideal→proposal)={d_proposal:.4f}, "
             f"d(ideal→status_quo)={d_status_quo:.4f}, voted={voted}"
