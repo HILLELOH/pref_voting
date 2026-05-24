@@ -5,7 +5,9 @@ Flask web application for AI-mediated coalition formation
 import logging
 import os
 import sys
-from flask import Flask, render_template, request, jsonify
+import threading
+import uuid
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 
 LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "app.log")
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -30,6 +32,45 @@ logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler
 logging.info(f"App starting. Python: {sys.executable}  cwd: {os.getcwd()}")
 
 app = Flask(__name__)
+
+# ============================================================================
+# JOB STORE — in-memory, keyed by job_id
+# Each job: {"status": "processing"|"done"|"error", "result": {...}, "error": str}
+# ============================================================================
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _build_result_kwargs(agents_info, majority_quota, result):
+    coalition_names = result["coalition"]
+    total_agents = len(agents_info)
+    coalition_size = len(coalition_names)
+    majority_quota_pct = round(majority_quota * 100)
+    coalition_pct = round(coalition_size / total_agents * 100) if total_agents else 0
+
+    votes_by_name = {v["name"]: v for v in result.get("votes", [])}
+    proof_rows = [
+        {
+            "name": a["name"],
+            "ideal": a["ideal"],
+            "d_proposal": round(votes_by_name.get(a["name"], {}).get("d_proposal", 0), 4),
+            "d_sq": round(votes_by_name.get(a["name"], {}).get("d_status_quo", 0), 4),
+            "voted_yes": a["name"] in coalition_names,
+        }
+        for a in agents_info
+    ]
+    return dict(
+        result_sentence=result["result"],
+        coalition_names=coalition_names,
+        coalition_size=coalition_size,
+        total_agents=total_agents,
+        coalition_pct=coalition_pct,
+        majority_quota_pct=majority_quota_pct,
+        status_quo=result.get("status_quo", ""),
+        proof_rows=proof_rows,
+        iterations=result.get("iterations", "?"),
+    )
+
 
 # ============================================================================
 # ROUTES
@@ -87,87 +128,103 @@ def random_input():
 
 @app.route("/run", methods=["POST"])
 def run():
+    names = request.form.getlist("agent_name")
+    sentences = request.form.getlist("agent_sentence")
+    status_quo = request.form.get("status_quo", "").strip()
+    majority_quota_str = request.form.get("majority_quota", "0.5")
+    sigma_str = request.form.get("sigma", "0.0")
+
+    # Input validation
+    errors = []
     try:
-        names = request.form.getlist("agent_name")
-        sentences = request.form.getlist("agent_sentence")
-        status_quo = request.form.get("status_quo", "").strip()
-        majority_quota = float(request.form.get("majority_quota", 0.5))
-        sigma = float(request.form.get("sigma", 0.0))
+        majority_quota = float(majority_quota_str)
+    except ValueError:
+        majority_quota = 0.5
+        errors.append("Majority quota must be a number.")
 
-        # Input validation
-        errors = []
-        if not status_quo:
-            errors.append("Status quo cannot be empty.")
-        agents_info = [
-            {"name": n.strip(), "ideal": s.strip()}
-            for n, s in zip(names, sentences)
-            if n.strip() and s.strip()
-        ]
-        if len(agents_info) < 2:
-            errors.append("At least 2 agents with non-empty name and sentence are required.")
-        if not (0 < majority_quota <= 1):
-            errors.append("Majority quota must be between 0 (exclusive) and 1 (inclusive).")
+    try:
+        sigma = float(sigma_str)
+    except ValueError:
+        sigma = 0.0
 
-        if errors:
-            return render_template(
-                "index.html",
-                errors=errors,
-                show_modal=False,
-                form_data=request.form,
-                prev_names=names,
-                prev_sentences=sentences,
-            ), 400
+    if not status_quo:
+        errors.append("Status quo cannot be empty.")
+    agents_info = [
+        {"name": n.strip(), "ideal": s.strip()}
+        for n, s in zip(names, sentences)
+        if n.strip() and s.strip()
+    ]
+    if len(agents_info) < 2:
+        errors.append("At least 2 agents with non-empty name and sentence are required.")
+    if not (0 < majority_quota <= 1):
+        errors.append("Majority quota must be between 0 (exclusive) and 1 (inclusive).")
 
-        from coalition_formation import run_coalition_formation
-
-        result = run_coalition_formation(
-            agents_info=agents_info,
-            status_quo=status_quo,
-            majority_quota=majority_quota,
-            sigma=sigma,
-        )
-
-        coalition_names = result["coalition"]
-        total_agents = len(agents_info)
-        coalition_size = len(coalition_names)
-        majority_quota_pct = round(majority_quota * 100)
-        coalition_pct = round(coalition_size / total_agents * 100) if total_agents else 0
-
-        votes_by_name = {v["name"]: v for v in result.get("votes", [])}
-        proof_rows = [
-            {
-                "name": a["name"],
-                "ideal": a["ideal"],
-                "d_proposal": round(votes_by_name.get(a["name"], {}).get("d_proposal", 0), 4),
-                "d_sq": round(votes_by_name.get(a["name"], {}).get("d_status_quo", 0), 4),
-                "voted_yes": a["name"] in coalition_names,
-            }
-            for a in agents_info
-        ]
-
-        return render_template(
-            "result.html",
-            result_sentence=result["result"],
-            coalition_names=coalition_names,
-            coalition_size=coalition_size,
-            total_agents=total_agents,
-            coalition_pct=coalition_pct,
-            majority_quota_pct=majority_quota_pct,
-            status_quo=status_quo,
-            proof_rows=proof_rows,
-            iterations=result.get("iterations", "?"),
-        )
-
-    except Exception as e:
-        logging.error(f"Error in /run: {e}", exc_info=True)
+    if errors:
         return render_template(
             "index.html",
-            errors=[str(e)],
+            errors=errors,
             show_modal=False,
             form_data=request.form,
-            prev_names=request.form.getlist("agent_name"),
-            prev_sentences=request.form.getlist("agent_sentence"),
-        ), 500
+            prev_names=names,
+            prev_sentences=sentences,
+        ), 400
+
+    # Create job and start background thread
+    job_id = uuid.uuid4().hex[:10]
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "processing"}
+
+    def _worker():
+        try:
+            from coalition_formation import run_coalition_formation
+            result = run_coalition_formation(
+                agents_info=agents_info,
+                status_quo=status_quo,
+                majority_quota=majority_quota,
+                sigma=sigma,
+            )
+            result["status_quo"] = status_quo
+            kwargs = _build_result_kwargs(agents_info, majority_quota, result)
+            with _jobs_lock:
+                _jobs[job_id] = {"status": "done", "kwargs": kwargs}
+        except Exception as e:
+            logging.error(f"Job {job_id} failed: {e}", exc_info=True)
+            with _jobs_lock:
+                _jobs[job_id] = {"status": "error", "message": str(e)}
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return redirect(url_for("wait", job_id=job_id))
+
+
+@app.route("/wait/<job_id>")
+def wait(job_id):
+    with _jobs_lock:
+        job = _jobs.get(job_id, {})
+    if not job:
+        return render_template("index.html", errors=["Job not found."], show_modal=False), 404
+    if job["status"] == "done":
+        return redirect(url_for("result", job_id=job_id))
+    if job["status"] == "error":
+        return render_template("index.html", errors=[job.get("message", "Unknown error.")], show_modal=False), 500
+    return render_template("wait.html", job_id=job_id)
+
+
+@app.route("/status/<job_id>")
+def job_status(job_id):
+    with _jobs_lock:
+        job = _jobs.get(job_id, {})
+    if not job:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": job["status"], "message": job.get("message", "")})
+
+
+@app.route("/result/<job_id>")
+def result(job_id):
+    with _jobs_lock:
+        job = _jobs.get(job_id, {})
+    if not job or job["status"] != "done":
+        return redirect(url_for("wait", job_id=job_id))
+    return render_template("result.html", **job["kwargs"])
 
 
 @app.route("/logs", methods=["GET"])
@@ -175,7 +232,7 @@ def logs():
     try:
         with open(LOG_PATH, "r") as f:
             lines = f.readlines()
-        content = "".join(lines[-500:])  # last 500 lines
+        content = "".join(lines[-500:])
     except FileNotFoundError:
         content = "(No log file found yet.)"
     return render_template("logs.html", content=content)

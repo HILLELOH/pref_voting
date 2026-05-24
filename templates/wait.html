@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Processing{% endblock %}
+{% block content %}
+
+<section class="card" style="text-align:center; padding:3rem 2rem;">
+    <div id="spinner" style="font-size:2.5rem; margin-bottom:1rem;">⏳</div>
+    <h2 style="margin-bottom:0.5rem;">Running coalition formation…</h2>
+    <p class="hint" style="margin-bottom:2rem;">
+        The algorithm is generating compromise sentences and merging coalitions.
+        This may take up to a few minutes depending on the number of agents.
+    </p>
+    <div style="background:#f0f4ff; border-radius:8px; padding:1rem; display:inline-block; min-width:220px;">
+        <span id="status-text" style="color:#16213e; font-weight:600;">Processing…</span>
+    </div>
+</section>
+
+<script>
+const jobId = {{ job_id | tojson }};
+let dots = 0;
+
+function poll() {
+    fetch('/status/' + jobId)
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'done') {
+                document.getElementById('status-text').textContent = 'Done! Redirecting…';
+                document.getElementById('spinner').textContent = '✓';
+                window.location.href = '/result/' + jobId;
+            } else if (data.status === 'error') {
+                document.getElementById('status-text').textContent = 'Error: ' + (data.message || 'unknown');
+                document.getElementById('spinner').textContent = '✗';
+            } else {
+                dots = (dots + 1) % 4;
+                document.getElementById('status-text').textContent = 'Processing' + '.'.repeat(dots + 1);
+                setTimeout(poll, 2000);
+            }
+        })
+        .catch(() => setTimeout(poll, 3000));
+}
+
+setTimeout(poll, 2000);
+</script>
+
+{% endblock %}
