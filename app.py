@@ -74,34 +74,63 @@ def random_input():
 def run():
     """Run the coalition formation algorithm."""
     try:
-        data = request.json
-        agents_info = data.get("agents", [])
-        status_quo = data.get("status_quo", "Do nothing about climate change.")
-        majority_quota = float(data.get("majority_quota", 0.5))
-        
-        # Import here (after route is called, not at startup)
+        names = request.form.getlist("agent_name")
+        sentences = request.form.getlist("agent_sentence")
+        status_quo = request.form.get("status_quo", "Do nothing about climate change.")
+        majority_quota = float(request.form.get("majority_quota", 0.5))
+
+        agents_info = [
+            {"name": n, "sentence": s}
+            for n, s in zip(names, sentences)
+            if n.strip() and s.strip()
+        ]
+
         from coalition_formation import run_coalition_formation
-        
+
         result = run_coalition_formation(
             agents_info=agents_info,
             status_quo=status_quo,
             majority_quota=majority_quota,
         )
-        
-        return jsonify({
-            "success": True,
-            "result": result["result"],
-            "coalition": result["coalition"],
-            "iterations": result["iterations"],
-            "votes": result["votes"],
-        })
-    
+
+        coalition_names = result["coalition"]
+        total_agents = len(agents_info)
+        coalition_size = len(coalition_names)
+        majority_quota_pct = round(majority_quota * 100)
+        coalition_pct = round(coalition_size / total_agents * 100) if total_agents else 0
+
+        votes_by_name = {v["name"]: v for v in result.get("votes", [])}
+        proof_rows = [
+            {
+                "name": a["name"],
+                "ideal": a["sentence"],
+                "d_proposal": round(votes_by_name.get(a["name"], {}).get("d_proposal", 0), 4),
+                "d_sq": round(votes_by_name.get(a["name"], {}).get("d_status_quo", 0), 4),
+                "voted_yes": a["name"] in coalition_names,
+            }
+            for a in agents_info
+        ]
+
+        return render_template(
+            "result.html",
+            result_sentence=result["result"],
+            coalition_names=coalition_names,
+            coalition_size=coalition_size,
+            total_agents=total_agents,
+            coalition_pct=coalition_pct,
+            majority_quota_pct=majority_quota_pct,
+            status_quo=status_quo,
+            proof_rows=proof_rows,
+            form_data=request.form,
+            prev_names=names,
+            prev_sentences=sentences,
+        )
+
     except Exception as e:
         logging.error(f"Error in /run: {e}", exc_info=True)
-        return jsonify({
-            "success": False,
-            "error": str(e),
-        }), 500
+        return render_template("index.html", error=str(e), form_data=request.form,
+                               prev_names=request.form.getlist("agent_name"),
+                               prev_sentences=request.form.getlist("agent_sentence")), 500
 
 
 # ============================================================================
