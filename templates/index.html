@@ -79,12 +79,12 @@ if (!localStorage.getItem('setup-seen')) {
     </p>
     <div class="algo-summary">
         <strong>How it works:</strong>
-        Each document is mapped to a 512-dimensional metric space using semantic embeddings.
-        A mediator identifies two coalitions based on their size-weighted distance from the system's centroid
-        and uses an LLM to generate candidate compromise sentences.
-        The proposal that minimizes the cosine dissimilarity from the groups' weighted mathematical average is selected.
-        Agents vote to join the new coalition if this proposal is closer to their ideal than the fixed status quo.
-        This iterative process repeats until a single coalition representing a majority converges on a final consensus.
+        Each agent has an ideal policy sentence. Starting from a status quo, the algorithm iterates:
+        (1) agents vote <em>yes</em> if the current proposal is closer to their ideal than the status quo
+        (measured by cosine dissimilarity of sentence embeddings);
+        (2) if a majority coalition is reached, the proposal wins;
+        (3) otherwise, two agents are selected and an LLM generates a compromise sentence as the next proposal.
+        The algorithm guarantees that every agent in the winning coalition genuinely prefers the result over the status quo.
     </div>
 </section>
 

@@ -1,4 +1,4 @@
-`{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Result{% endblock %}
 {% block content %}
 
@@ -12,7 +12,8 @@
         <strong>Coalition size:</strong>
         {{ coalition_size }} / {{ total_agents }} agents ({{ coalition_pct }}%)<br>
         <strong>Required majority:</strong> {{ majority_quota_pct }}% -
-        <span class="badge-ok">✓ Satisfied</span>
+        <span class="badge-ok">✓ Satisfied</span><br>
+        <strong>Iterations:</strong> {{ iterations }}
     </p>
 </section>
 
@@ -28,8 +29,8 @@
         {{ majority_quota_pct }}% of agents prefer the proposal over the status quo.<br>
         Each agent in the coalition satisfies
         <em>d(ideal → proposal)</em> &lt; <em>d(ideal → status quo)</em>,
-        meaning the proposal is closer to their ideal than the status quo.
-        Distance = cosine dissimilarity of sentence embeddings (range [0, 2]).
+        meaning the proposal is strictly closer to their ideal than the status quo.
+        Distance = cosine dissimilarity of sentence embeddings (range [0, 1]).
     </p>
     <table>
         <thead>

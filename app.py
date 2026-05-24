@@ -6,11 +6,16 @@ import logging
 import os
 from flask import Flask, render_template, request, jsonify
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "app.log")
+os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+
+_fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+_file_handler = logging.FileHandler(LOG_PATH)
+_file_handler.setFormatter(_fmt)
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
 
 app = Flask(__name__)
 
@@ -20,15 +25,13 @@ app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
 def index():
-    """Render the main page."""
-    return render_template("index.html")
+    return render_template("index.html", show_modal=True)
 
 
 @app.route("/random-input", methods=["GET"])
 def random_input():
-    """Generate random agent proposals."""
     n = int(request.args.get('n', 5))
-    
+
     proposals = [
         "Subsidise electric vehicles for consumers.",
         "Establish a global climate emergency fund.",
@@ -50,10 +53,10 @@ def random_input():
         "Require companies to disclose carbon footprints.",
         "Promote circular economy to reduce waste.",
     ]
-    
+
     import random
     selected = random.sample(proposals, min(n, len(proposals)))
-    
+
     agents = [
         {"name": f"Agent {i+1}", "sentence": proposal}
         for i, proposal in enumerate(selected)
@@ -72,18 +75,36 @@ def random_input():
 
 @app.route("/run", methods=["POST"])
 def run():
-    """Run the coalition formation algorithm."""
     try:
         names = request.form.getlist("agent_name")
         sentences = request.form.getlist("agent_sentence")
-        status_quo = request.form.get("status_quo", "Do nothing about climate change.")
+        status_quo = request.form.get("status_quo", "").strip()
         majority_quota = float(request.form.get("majority_quota", 0.5))
+        sigma = float(request.form.get("sigma", 0.0))
 
+        # Input validation
+        errors = []
+        if not status_quo:
+            errors.append("Status quo cannot be empty.")
         agents_info = [
-            {"name": n, "ideal": s}
+            {"name": n.strip(), "ideal": s.strip()}
             for n, s in zip(names, sentences)
             if n.strip() and s.strip()
         ]
+        if len(agents_info) < 2:
+            errors.append("At least 2 agents with non-empty name and sentence are required.")
+        if not (0 < majority_quota <= 1):
+            errors.append("Majority quota must be between 0 (exclusive) and 1 (inclusive).")
+
+        if errors:
+            return render_template(
+                "index.html",
+                errors=errors,
+                show_modal=False,
+                form_data=request.form,
+                prev_names=names,
+                prev_sentences=sentences,
+            ), 400
 
         from coalition_formation import run_coalition_formation
 
@@ -91,6 +112,7 @@ def run():
             agents_info=agents_info,
             status_quo=status_quo,
             majority_quota=majority_quota,
+            sigma=sigma,
         )
 
         coalition_names = result["coalition"]
@@ -121,16 +143,30 @@ def run():
             majority_quota_pct=majority_quota_pct,
             status_quo=status_quo,
             proof_rows=proof_rows,
-            form_data=request.form,
-            prev_names=names,
-            prev_sentences=sentences,
+            iterations=result.get("iterations", "?"),
         )
 
     except Exception as e:
         logging.error(f"Error in /run: {e}", exc_info=True)
-        return render_template("index.html", error=str(e), form_data=request.form,
-                               prev_names=request.form.getlist("agent_name"),
-                               prev_sentences=request.form.getlist("agent_sentence")), 500
+        return render_template(
+            "index.html",
+            errors=[str(e)],
+            show_modal=False,
+            form_data=request.form,
+            prev_names=request.form.getlist("agent_name"),
+            prev_sentences=request.form.getlist("agent_sentence"),
+        ), 500
+
+
+@app.route("/logs", methods=["GET"])
+def logs():
+    try:
+        with open(LOG_PATH, "r") as f:
+            lines = f.readlines()
+        content = "".join(lines[-500:])  # last 500 lines
+    except FileNotFoundError:
+        content = "(No log file found yet.)"
+    return render_template("logs.html", content=content)
 
 
 # ============================================================================
@@ -139,13 +175,13 @@ def run():
 
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({"error": "Not found"}), 404
+    return render_template("index.html", errors=["Page not found."], show_modal=False), 404
 
 
 @app.errorhandler(500)
 def server_error(e):
     logging.error(f"Server error: {e}", exc_info=True)
-    return jsonify({"error": "Internal server error"}), 500
+    return render_template("index.html", errors=["Internal server error."], show_modal=False), 500
 
 
 # ============================================================================
