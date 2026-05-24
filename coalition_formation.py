@@ -4,6 +4,7 @@ Based on: Briman, Shapiro, Talmon 2024
 https://arxiv.org/pdf/2512.05983
 """
 
+import gc
 import json
 import logging
 import os
@@ -143,6 +144,11 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
 
 def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2) -> list[str]:
     """Call local Qwen2.5-0.5B for compromise generation."""
+    global _st_model
+    # Free sentence-transformer before loading Qwen — both can't coexist on low-RAM servers
+    _st_model = None
+    gc.collect()
+
     logger.info(f"Calling Qwen for {n} compromise candidates...")
 
     llm = _get_qwen_model()
@@ -188,6 +194,7 @@ def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2) -> list[str]:
         return filtered
     finally:
         del llm
+        gc.collect()
 
 
 # ============================================================================
