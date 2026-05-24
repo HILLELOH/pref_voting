@@ -55,11 +55,19 @@ def random_input():
     selected = random.sample(proposals, min(n, len(proposals)))
     
     agents = [
-        {"name": f"Agent {i+1}", "ideal": proposal}
+        {"name": f"Agent {i+1}", "sentence": proposal}
         for i, proposal in enumerate(selected)
     ]
-    
-    return jsonify({"agents": agents})
+
+    status_quo_options = [
+        "Continue current energy policy with minor adjustments.",
+        "Maintain existing environmental regulations as they are.",
+        "No major policy changes; focus on voluntary industry action.",
+        "Keep current carbon targets without new enforcement mechanisms.",
+    ]
+    status_quo = random.choice(status_quo_options)
+
+    return jsonify({"agents": agents, "status_quo": status_quo})
 
 
 @app.route("/run", methods=["POST"])
