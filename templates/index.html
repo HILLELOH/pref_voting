@@ -4,7 +4,7 @@
 {% block modal %}
 {% if show_modal %}
 <div id="setup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
-  <div style="background:white; border-radius:10px; max-width:580px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative;">
+  <div style="background:white; border-radius:10px; max-width:580px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative; max-height:90vh; overflow-y:auto;">
     <h2 style="margin-bottom:0.5rem; color:#16213e;">Before you start</h2>
     <p style="color:#555; margin-bottom:1.5rem; font-size:0.95rem;">
       This app uses an LLM to generate compromise sentences. Choose one option below.
