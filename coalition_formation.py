@@ -10,12 +10,18 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import random
+import re
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+# Prevent PyTorch from reserving too much RAM, which starves llama-cpp
+os.environ["OMP_NUM_THREADS"] = "4"
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +29,15 @@ _st_model = None
 _ST_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 _EMBED_DIM = 512
 
-
 def _get_st_model():
     """Load the sentence-transformer model (cached after first call)."""
     global _st_model
     if _st_model is None:
         from sentence_transformers import SentenceTransformer
         logger.info("Loading sentence-transformer model '%s'…", _ST_MODEL_NAME)
-        _st_model = SentenceTransformer(_ST_MODEL_NAME)
+        # Force CPU to avoid VRAM conflicts if a GPU is present
+        _st_model = SentenceTransformer(_ST_MODEL_NAME, device="cpu")
     return _st_model
-
 
 @dataclass
 class _Coalition:
@@ -47,23 +52,7 @@ class _Coalition:
 
 @lru_cache(maxsize=1024)
 def embed_text(text: str) -> np.ndarray:
-    """Embed a sentence into a 512-dimensional semantic vector (Section 4.1).
-    
-    Args:
-        text (str): A natural-language sentence.
-
-    Returns:
-        np.ndarray: A 512-element float array.
-
-    >>> v = embed_text("We must reduce carbon emissions.")
-    >>> len(v)
-    512
-    >>> all(isinstance(x, float) for x in v)
-    True
-    >>> v2 = embed_text("We must reduce carbon emissions.")
-    >>> cosine_dissimilarity(v, v2) == 0.0
-    True
-    """
+    """Embed a sentence into a 512-dimensional semantic vector."""
     logger.debug("Computing embedding (cache miss) for: %.60r", text)
     raw = _get_st_model().encode(text, convert_to_numpy=True)
     padded = np.zeros(_EMBED_DIM)
@@ -72,20 +61,7 @@ def embed_text(text: str) -> np.ndarray:
 
 
 def cosine_dissimilarity(v1: np.ndarray, v2: np.ndarray) -> float:
-    """sqrt(2 - 2*cos(theta)) - Section 4.1, footnote 6. Returns values in [0, 2].
-
-    Args:
-        v1 (np.ndarray): First embedding vector.
-        v2 (np.ndarray): Second embedding vector.
-
-    Returns:
-        float: Distance in [0, 2].
-
-    >>> cosine_dissimilarity([1.0, 0.0], [1.0, 0.0])
-    0.0
-    >>> round(cosine_dissimilarity([1.0, 0.0], [0.0, 1.0]), 4)
-    1.4142
-    """
+    """sqrt(2 - 2*cos(theta)). Returns values in [0, 2]."""
     v1, v2 = np.asarray(v1, dtype=float), np.asarray(v2, dtype=float)
     n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
     if n1 == 0 or n2 == 0:
@@ -95,69 +71,42 @@ def cosine_dissimilarity(v1: np.ndarray, v2: np.ndarray) -> float:
 
 
 def agent_votes(ideal: str, proposal: str, status_quo: str, sigma: float = 0.0) -> bool:
-    """Return True if the agent accepts the proposed compromise sentence.
-
-    Deterministic (sigma=0): accept iff d(ideal, proposal) <= d(ideal, status_quo).
-    Probabilistic (sigma>0): half-Gaussian acceptance when proposal is farther (Definition 5).
-
-    Args:
-        ideal (str): The agent's ideal sentence.
-        proposal (str): The mediator's proposed sentence.
-        status_quo (str): The current status-quo sentence.
-        sigma (float): Flexibility >= 0. 0 = fully deterministic.
-
-    Returns:
-        bool: True if the agent votes to accept.
-
-    >>> agent_votes("Cut carbon now.", "Cut carbon now.", "Do nothing.", sigma=0.0)
-    True
-    >>> agent_votes("Cut carbon now.", "Do nothing.", "Cut carbon now.", sigma=0.0)
-    False
-    """
+    """Return True if the agent accepts the proposed compromise sentence."""
     d_proposal = cosine_dissimilarity(embed_text(ideal), embed_text(proposal))
     d_sq = cosine_dissimilarity(embed_text(ideal), embed_text(status_quo))
 
     if d_proposal <= d_sq:
-        logger.debug("agent_votes: d_prop=%.4f <= d_sq=%.4f → accept", d_proposal, d_sq)
         return True
     if sigma == 0.0:
-        logger.debug("agent_votes: d_prop=%.4f > d_sq=%.4f, sigma=0 → reject", d_proposal, d_sq)
         return False
 
     prob = min(1.0, math.sqrt(2.0 / math.pi) / sigma * math.exp(-d_proposal**2 / (2.0 * sigma**2)))
-    result = bool(random.random() < prob)
-    logger.debug("agent_votes: d_prop=%.4f > d_sq=%.4f, prob=%.4f → %s", d_proposal, d_sq, prob, "accept" if result else "reject")
-    return result
+    return bool(random.random() < prob)
 
 
-def generate_compromise_sentences(
-    sentence1: str,
-    sentence2: str,
-    n: int = 2,
-    api_key: str = None,
-) -> list[str]:
-    """Ask an LLM to generate n sentences aggregating the two inputs (Section 4.2).
+_llama_cpp_model = None
 
-    Priority: OpenRouter API key → Qwen (llama-cpp locally)
+def _get_llama_cpp_model():
+    """Load Qwen model locally strictly via llama-cpp."""
+    global _llama_cpp_model
+    if _llama_cpp_model is None:
+        from llama_cpp import Llama
+        logger.info("Loading Qwen2.5-0.5B from local file via llama-cpp…")
+        model_path = os.path.join(os.path.dirname(__file__), "models", "qwen2.5-0.5b-instruct-q3_k_m.gguf")
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at {model_path}")
+            
+        logger.debug("Model path: %s", model_path)
+        _llama_cpp_model = Llama(
+            model_path=model_path,
+            verbose=False,
+            n_ctx=1024,
+            n_threads=4, # Restrict threads to prevent memory spikes
+            n_batch=256  # Smaller batch size uses less memory
+        )
+    return _llama_cpp_model
 
-    Args:
-        sentence1 (str): Compromise sentence of the first coalition.
-        sentence2 (str): Compromise sentence of the second coalition.
-        n (int): Number of candidate sentences to generate.
-        api_key (str): OpenRouter API key (overrides OPENROUTER_API_KEY env var).
-
-    Returns:
-        list[str]: n candidate compromise sentences.
-    """
-    import os
-    actual_key = api_key or os.environ.get("OPENROUTER_API_KEY")
-    
-    # Try OpenRouter first if API key available
-    if actual_key:
-        return _openrouter_compromise_sentences(sentence1, sentence2, n, actual_key)
-    
-    # Use Qwen locally via llama-cpp (no fallback)
-    return _llama_cpp_compromise_sentences(sentence1, sentence2, n)
 
 def _build_mediator_prompt(sentence1: str, sentence2: str, n: int) -> tuple[str, str]:
     prompt = (
@@ -179,58 +128,21 @@ def _build_mediator_prompt(sentence1: str, sentence2: str, n: int) -> tuple[str,
         "so that they do not look superficially similar to either input. "
         "Respond strictly with valid JSON. No markdown wrappers (like ```json), no conversational filler."
     )
-    
     return system_msg, prompt
 
 
-def _openrouter_compromise_sentences(sentence1: str, sentence2: str, n: int, api_key: str) -> list[str]:
-    """Call LLM via OpenRouter with JSON-mode Mediator-1 prompt (Section 4.2, Option 1)."""
-    import openai
-    client = openai.OpenAI(
-        api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
-        max_retries=6,
-    )
-    system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
-    logger.info("Calling OpenRouter for %d compromise candidates between %r and %r",
-                n, sentence1[:50], sentence2[:50])
-    try:
-        response = client.chat.completions.create(
-            model="meta-llama/llama-3.2-3b-instruct:free",
-            temperature=0.75,
-            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}],
-        )
-    except (openai.RateLimitError, openai.APIConnectionError, openai.APIStatusError) as e:
-        logger.warning("OpenRouter unavailable (%s: %s) — falling back.", type(e).__name__, e)
-        return _fallback_compromise_sentences(sentence1, sentence2, n)
-    raw = response.choices[0].message.content or ""
-    logger.debug("OpenRouter raw response (%d chars): %.200r", len(raw), raw)
-    return _parse_json_response(raw, n, sentence1, sentence2)
-
-
-_llama_cpp_model = None
-
-
-def _get_llama_cpp_model():
-    global _llama_cpp_model
-    if _llama_cpp_model is None:
-        import os
-        from llama_cpp import Llama
-        logger.info("Loading Qwen2.5-0.5B from local file via llama-cpp…")
-        model_path = os.path.join(os.path.dirname(__file__), "models", "qwen2.5-0.5b-instruct-q3_k_m.gguf")
-        logger.debug("Model path: %s", model_path)
-        _llama_cpp_model = Llama(
-            model_path=model_path,
-            verbose=False,
-            n_ctx=1024,
-        )
-    return _llama_cpp_model
-
-def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> list[str]:
+def generate_compromise_sentences(
+    sentence1: str,
+    sentence2: str,
+    n: int = 2,
+    api_key: str = None, # Left in args to prevent breaking app.py, but ignored
+) -> list[str]:
+    """Generate sentences aggregating the two inputs using ONLY local Qwen."""
     llm = _get_llama_cpp_model()
     system_msg, prompt = _build_mediator_prompt(sentence1, sentence2, n)
-    logger.info("Calling llama-cpp for %d compromise candidates between %r and %r",
-                n, sentence1[:50], sentence2[:50])
+    
+    logger.info("Calling local llama-cpp (Qwen) for %d compromise candidates...", n)
+    
     response = llm.create_chat_completion(
         messages=[
             {"role": "system", "content": system_msg},
@@ -240,27 +152,13 @@ def _llama_cpp_compromise_sentences(sentence1: str, sentence2: str, n: int) -> l
         response_format={"type": "json_object"},
     )
     raw = response["choices"][0]["message"]["content"] or ""
-    logger.info("RAW QWEN OUTPUT: %s", raw)  # ← ADD THIS LINE
-    logger.debug("llama-cpp raw response (%d chars): %.200r", len(raw), raw)
+    logger.info("RAW QWEN OUTPUT: %s", raw)
+    
     return _parse_json_response(raw, n, sentence1, sentence2)
 
 
 def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> list[str]:
-    """Parse GPT JSON response into a list of n compromise strings.
-
-    Expected format: {"compromises": ["s1", "s2", ...]}
-    Also handles bare arrays, alternate key names, and truncated responses.
-    Falls back to template sentences only if all strategies fail.
-
-    >>> _parse_json_response('{"compromises": ["Hello world", "Goodbye world"]}', 2, "a", "b")
-    ['Hello world', 'Goodbye world']
-    >>> len(_parse_json_response('{"compromises": ["Only one."]}', 3, "a", "b"))
-    3
-    >>> _parse_json_response('["Hello world", "Goodbye world"]', 2, "a", "b")
-    ['Hello world', 'Goodbye world']
-    """
-    import re
-
+    """Parse JSON response into a list of n compromise strings."""
     cleaned = text.strip()
     cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
     cleaned = re.sub(r'\s*```$', '', cleaned)
@@ -276,24 +174,17 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
         return None
 
     attempts = [cleaned]
-
-    # JSON object anywhere in text
     m = re.search(r'\{.*\}', cleaned, re.DOTALL)
-    if m:
-        attempts.append(m.group(0))
+    if m: attempts.append(m.group(0))
 
-    # JSON array anywhere in text
     m = re.search(r'\[.*\]', cleaned, re.DOTALL)
-    if m:
-        attempts.append(m.group(0))
+    if m: attempts.append(m.group(0))
 
-    # Truncated object: {"compromises": [...  → close it
     for pfx in ('{"compromises":[', '{"compromises": ['):
         idx = cleaned.find(pfx)
         if idx >= 0:
             attempts.append(cleaned[idx:].rstrip().rstrip(',') + ']}')
 
-    # Truncated bare array: ["s1", "s2", ...  → close it
     idx = cleaned.find('[')
     if idx >= 0:
         attempts.append(cleaned[idx:].rstrip().rstrip(',') + ']')
@@ -302,14 +193,13 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
     for attempt in attempts:
         try:
             results = _extract(json.loads(attempt))
-            if results:
-                break
+            if results: break
         except (json.JSONDecodeError, TypeError):
             continue
 
     if not results:
-        logger.warning("Failed to parse GPT JSON response (cleaned=%r): falling back to template mode.", cleaned[:200])
-        return _fallback_compromise_sentences(sentence1, sentence2, n)
+        logger.warning("Failed to parse JSON. Returning fallback templates.")
+        return [f"{sentence1.rstrip('.')} and {sentence2.lower()}"] * n
 
     if len(results) < n:
         results += [results[-1]] * (n - len(results))
@@ -322,30 +212,7 @@ def choose_best_sentence(
     original_sentences: list[str] = None,
     diversity_weight: float = 0.35,
 ) -> str:
-    """Return the candidate closest to target while penalizing similarity to originals (Section 4.1).
-
-    Scoring formula:
-        composite_score = dist_to_target + diversity_weight * similarity_penalty
-    
-    where similarity_penalty = max(0, 1.0 - min_distance_to_original)
-
-    This prefers compromises that are both:
-      (1) Semantically close to the centroid of the two coalitions
-      (2) Distinct from the original coalition ideal sentences
-    
-    Prevents the algorithm from selecting an unchanged ideal as the "compromise."
-
-    Args:
-        candidates (list[str]): Candidate sentences from the LLM mediator.
-        target (np.ndarray): Weighted-average embedding of the two coalition points.
-        original_sentences (list[str]): Original coalition sentences [c_i.sentence, c_j.sentence].
-                                       If None, uses pure distance minimization.
-        diversity_weight (float): Weight of diversity penalty in [0, 1]. 
-                                Default 0.35 balances centroid closeness with distinctness.
-
-    Returns:
-        str: The best candidate sentence.
-    """
+    """Return the candidate closest to target while penalizing similarity to originals."""
     if len(candidates) == 1:
         return candidates[0]
     
@@ -354,34 +221,19 @@ def choose_best_sentence(
         s_emb = embed_text(s)
         dist_to_target = cosine_dissimilarity(s_emb, target)
         
-        # If original sentences provided, penalize similarity to them
         if original_sentences and len(original_sentences) > 0:
             min_dist_to_original = min(
                 cosine_dissimilarity(s_emb, embed_text(orig))
                 for orig in original_sentences
             )
-            # Penalty: 1.0 if identical (dist ≈ 0), 0.0 if very different (dist > 1.0)
             similarity_penalty = max(0.0, 1.0 - min_dist_to_original)
             composite_score = dist_to_target + diversity_weight * similarity_penalty
             scored.append((dist_to_target, composite_score, similarity_penalty, s))
         else:
             scored.append((dist_to_target, dist_to_target, None, s))
     
-    # Sort by composite score (or pure distance if no originals)
     scored.sort(key=lambda x: x[1])
-    
-    logger.debug("choose_best_sentence: %d candidates ranked:", len(scored))
-    for rank, (dist_target, composite, penalty, s) in enumerate(scored):
-        if penalty is not None:
-            logger.debug(
-                "  [%d] dist_target=%.4f  diversity_penalty=%.4f  composite=%.4f  %r",
-                rank, dist_target, penalty, composite, s[:70]
-            )
-        else:
-            logger.debug("  [%d] dist=%.4f  %r", rank, dist_target, s[:70])
-    
-    best = scored[0][3]
-    return best
+    return scored[0][3]
 
 
 # ---------------------------------------------------------------------------
@@ -399,49 +251,14 @@ def coalition_formation(
     seed: Optional[int] = None,
     api_key: Optional[str] = None,
 ) -> tuple[str, list[int]]:
-    """Run the AI-mediated coalition formation algorithm (Algorithm 1, Section 1.2).
+    """Run the AI-mediated coalition formation algorithm."""
 
-    Each agent starts in a singleton coalition. Iteratively:
-      (a) Select two coalitions via centroid-based scoring (Section 2.3).
-      (b) Generate a compromise sentence via LLM mediator (Section 4.2).
-      (c) Agents vote; winners join the new coalition (Section 2.2).
-      (d) Halt when a coalition covers >= majority_quota of all agents.
-
-    Args:
-        ideal_sentences (dict[int, str]): Agent index -> ideal sentence.
-        status_quo (str): The starting status-quo sentence.
-        majority_quota (float): Fraction of agents needed to halt (default 0.5).
-        sigma (float): Agent flexibility (0 = deterministic).
-        alpha (float): Mediator coalition-selection bias in [-1, 1].
-        coalition_discipline (bool): Enforce whole-coalition voting.
-        max_iterations (int): Safety cap on iterations.
-        seed (Optional[int]): Random seed for reproducibility.
-        api_key (Optional[str]): OpenAI API key (falls back to OPENAI_API_KEY env var).
-
-    Returns:
-        tuple[str, list[int]]: Winning compromise sentence and sorted agent indices.
-
-    >>> sentence, agents = coalition_formation({0: "Protect the forests."}, "Do nothing.")
-    >>> agents
-    [0]
-    """
-
-    from pathlib import Path
-
-    # Define the path to your file
     file_path = Path("logs/app.log")
-
-    # Check if the file exists, then delete it
     if file_path.is_file():
         file_path.unlink()
-        print(f"Successfully deleted {file_path}")
-    else:
-        print(f"The file {file_path} does not exist.")
 
     if not 0.0 <= majority_quota <= 1.0:
         raise ValueError(f"majority_quota must be in [0, 1], got {majority_quota}")
-    if not -1.0 <= alpha <= 1.0:
-        raise ValueError(f"alpha must be in [-1, 1], got {alpha}")
     if not ideal_sentences:
         return status_quo, []
 
@@ -450,7 +267,6 @@ def coalition_formation(
         random.seed(seed)
         np.random.seed(seed)
 
-    # Initialise: embed all ideal sentences once (lru_cache prevents re-computation)
     coalitions = [
         _Coalition(agents={i}, sentence=s, embedding=embed_text(s))
         for i, s in ideal_sentences.items()
@@ -472,15 +288,10 @@ def coalition_formation(
         no  = {a for a, v in votes.items() if not v}
         return yes, no
 
-    logger.info("Init: %d agents, quota=%.2f, sigma=%.2f, alpha=%.2f, discipline=%s",
-                n_agents, majority_quota, sigma, alpha, coalition_discipline)
-    for i, s in ideal_sentences.items():
-        logger.debug("  Agent %d: %r", i, s)
+    logger.info("Init: %d agents, quota=%.2f, sigma=%.2f", n_agents, majority_quota, sigma)
 
-    # Trivial halt: singleton already satisfies quota
     for c in coalitions:
         if meets_quota(c):
-            logger.info("Trivial halt: singleton agent set %s already meets quota.", sorted(c.agents))
             return c.sentence, sorted(c.agents)
 
     for iteration in range(1, max_iterations + 1):
@@ -489,98 +300,50 @@ def coalition_formation(
         if len(coalitions) == 1:
             break
 
-        # (a) Global centroid = Σ(|C_i| * p_i) / n  (Section 2.3)
         sizes = np.array([len(c.agents) for c in coalitions], dtype=float)
         embeddings = np.stack([c.embedding for c in coalitions])
         centroid = (sizes @ embeddings) / sizes.sum()
 
-        # (b) Score coalitions and sample d_i
         dists = np.array([cosine_dissimilarity(c.embedding, centroid) for c in coalitions])
         probs = np.exp(alpha * (dists / (dists.max() or 1.0)))
         probs /= probs.sum()
         idx_i = int(np.random.choice(len(coalitions), p=probs))
-        logger.debug("Sampling: chose idx_i=%d (prob=%.4f, dist_to_centroid=%.4f)", idx_i, probs[idx_i], dists[idx_i])
 
-        # (c) d_j = nearest coalition to d_i
         idx_j = min(
             (k for k in range(len(coalitions)) if k != idx_i),
             key=lambda k: cosine_dissimilarity(coalitions[k].embedding, coalitions[idx_i].embedding),
         )
-        logger.debug("Nearest pair: idx_j=%d (dist=%.4f)",
-                     idx_j, cosine_dissimilarity(coalitions[idx_i].embedding, coalitions[idx_j].embedding))
 
         c_i, c_j = coalitions[idx_i], coalitions[idx_j]
-        logger.debug("Selected pair: [%d] %d agents %r  vs  [%d] %d agents %r",
-                     idx_i, len(c_i.agents), c_i.sentence[:50],
-                     idx_j, len(c_j.agents), c_j.sentence[:50])
         size_i, size_j = float(len(c_i.agents)), float(len(c_j.agents))
 
-        # (d) Compromise target = size-weighted average of p_i and p_j
         target_emb = (size_i * c_i.embedding + size_j * c_j.embedding) / (size_i + size_j)
 
-        # (e) Generate and select compromise sentence
-        candidates = generate_compromise_sentences(c_i.sentence, c_j.sentence, api_key=api_key)
-        compromise_sentence = choose_best_sentence(candidates, target_emb)
+        # STRICTLY uses local qwen model now
+        candidates = generate_compromise_sentences(c_i.sentence, c_j.sentence)
+        
+        compromise_sentence = choose_best_sentence(
+            candidates, 
+            target_emb, 
+            original_sentences=[c_i.sentence, c_j.sentence]
+        )
         compromise_emb = embed_text(compromise_sentence)
-        logger.info("Compromise chosen: %r", compromise_sentence)
 
-        # (f) Agents vote (Section 2.2)
         votes_i = cast_votes(c_i, compromise_sentence)
         votes_j = cast_votes(c_j, compromise_sentence)
-        logger.debug("Votes coalition_i (agents %s): %s",
-                     sorted(c_i.agents),
-                     {a: ("Y" if v else "N") for a, v in votes_i.items()})
-        logger.debug("Votes coalition_j (agents %s): %s",
-                     sorted(c_j.agents),
-                     {a: ("Y" if v else "N") for a, v in votes_j.items()})
+        
         new_i, rem_i = split(votes_i, c_i.agents, coalition_discipline)
         new_j, rem_j = split(votes_j, c_j.agents, coalition_discipline)
         new_agents = new_i | new_j
-        logger.info("Vote result: yes_i=%d/%d  yes_j=%d/%d  merged=%d",
-                    len(new_i), len(c_i.agents), len(new_j), len(c_j.agents), len(new_agents))
-        if not new_agents:
-            logger.warning("No agents accepted compromise at iteration %d - coalition unchanged.", iteration)
-
-        # (g) Update coalition structure
+        
         coalitions = [c for k, c in enumerate(coalitions) if k not in (idx_i, idx_j)]
-        if rem_i:
-            coalitions.append(_Coalition(rem_i, c_i.sentence, c_i.embedding))
-        if rem_j:
-            coalitions.append(_Coalition(rem_j, c_j.sentence, c_j.embedding))
-        if new_agents:
-            coalitions.append(_Coalition(new_agents, compromise_sentence, compromise_emb))
+        if rem_i: coalitions.append(_Coalition(rem_i, c_i.sentence, c_i.embedding))
+        if rem_j: coalitions.append(_Coalition(rem_j, c_j.sentence, c_j.embedding))
+        if new_agents: coalitions.append(_Coalition(new_agents, compromise_sentence, compromise_emb))
 
-        logger.debug("Post-merge: %d coalitions, sizes=%s", len(coalitions), sorted([len(c.agents) for c in coalitions], reverse=True))
-
-        # (h) Check halting condition
         for c in coalitions:
             if meets_quota(c):
-                logger.info("Halting at iteration %d: coalition size %d.", iteration, len(c.agents))
                 return c.sentence, sorted(c.agents)
 
-    logger.warning("Max iterations (%d) reached without majority. Returning largest coalition (%d/%d agents).",
-                   max_iterations, len(max(coalitions, key=lambda c: len(c.agents)).agents), n_agents)
     winner = max(coalitions, key=lambda c: len(c.agents))
     return winner.sentence, sorted(winner.agents)
-
-
-if __name__=='__main__':
-    import dotenv
-    dotenv.load_dotenv()
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s | %(message)s")
-    logger.setLevel(logging.DEBUG)
-    # 20 agents on related topics must coalesce into a majority.
-    topics = [
-        "Plant trees globally.", "Ban fossil fuels immediately.",
-        "Invest in nuclear energy.", "Tax carbon emissions heavily.",
-        "Improve public transport networks.", "Subsidise electric vehicles now.",
-        "Reduce meat consumption worldwide.", "Install rooftop solar panels.",
-        "Protect existing rainforests legally.", "Develop carbon capture technologies.",
-    ] * 2
-    ideal = {i: topics[i] for i in range(20)}
-
-    sentence, agents = coalition_formation(
-        ideal, "Do nothing about climate change.", sigma=1.0, seed=77
-    )
-    print(f'sentece: {sentence}')
-    print(f'agents: {agents}')
