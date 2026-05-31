@@ -55,7 +55,8 @@ def _build_result_kwargs(agents_info, majority_quota, result):
             "ideal": a["ideal"],
             "d_proposal": round(votes_by_name.get(a["name"], {}).get("d_proposal", 0), 4),
             "d_sq": round(votes_by_name.get(a["name"], {}).get("d_status_quo", 0), 4),
-            "voted_yes": a["name"] in coalition_names,
+            "prefers_proposal": votes_by_name.get(a["name"], {}).get("voted", False),
+            "in_coalition": a["name"] in coalition_names,
         }
         for a in agents_info
     ]
@@ -180,6 +181,19 @@ def run():
             open(LOG_PATH, 'w').close()
         except OSError:
             pass
+
+        def on_progress(data):
+            with _jobs_lock:
+                if job_id in _jobs:
+                    job = _jobs[job_id]
+                    job["progress"] = data
+                    events = job.setdefault("events", [])
+                    # Only log terminal events (not "start"), avoid flooding
+                    if data.get("event") not in ("start",):
+                        events.append(data)
+                        if len(events) > 30:
+                            events.pop(0)
+
         try:
             from coalition_formation import run_coalition_formation
             result = run_coalition_formation(
@@ -187,6 +201,7 @@ def run():
                 status_quo=status_quo,
                 majority_quota=majority_quota,
                 sigma=sigma,
+                progress_callback=on_progress,
             )
             result["status_quo"] = status_quo
             kwargs = _build_result_kwargs(agents_info, majority_quota, result)
@@ -206,7 +221,7 @@ def wait(job_id):
     with _jobs_lock:
         job = _jobs.get(job_id, {})
     if not job:
-        return render_template("index.html", errors=["Job not found."], show_modal=False), 404
+        return redirect(url_for("index"))
     if job["status"] == "done":
         return redirect(url_for("result", job_id=job_id))
     if job["status"] == "error":
@@ -220,7 +235,13 @@ def job_status(job_id):
         job = _jobs.get(job_id, {})
     if not job:
         return jsonify({"status": "not_found"}), 404
-    return jsonify({"status": job["status"], "message": job.get("message", "")})
+
+    return jsonify({
+        "status": job["status"],
+        "message": job.get("message", ""),
+        "progress": job.get("progress"),
+        "events": job.get("events", []),
+    })
 
 
 @app.route("/result/<job_id>")

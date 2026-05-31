@@ -125,7 +125,29 @@ h1 { font-size: 1.8rem; color: #16213e; margin-bottom: 1.5rem; }
     margin: 0.75rem 0; padding: 0.5rem 1rem;
     border-left: 3px solid #22c55e; background: #f0fdf4; border-radius: 4px;
 }
-.badge-ok { color: #16a34a; font-weight: 700; }
+.badge-ok   { color: #16a34a; font-weight: 700; }
+.badge-fail { color: #dc2626; font-weight: 700; }
+
+/* Info tooltip */
+.info-tip {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: #94a3b8; color: white; font-size: 0.62rem; font-weight: 700;
+    cursor: help; position: relative; vertical-align: middle;
+    margin-left: 5px; font-style: normal; user-select: none;
+}
+.info-tip::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 8px); left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b; color: #f1f5f9;
+    padding: 0.55rem 0.8rem; border-radius: 7px;
+    font-size: 0.78rem; line-height: 1.55; width: 240px;
+    white-space: normal; font-weight: 400;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s;
+    z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+.info-tip:hover::after { opacity: 1; }
 
 /* Table */
 table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 1rem; }

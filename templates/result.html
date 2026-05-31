@@ -12,7 +12,11 @@
         <strong>Coalition size:</strong>
         {{ coalition_size }} / {{ total_agents }} agents ({{ coalition_pct }}%)<br>
         <strong>Required majority:</strong> {{ majority_quota_pct }}% -
-        <span class="badge-ok">✓ Satisfied</span><br>
+        {% if coalition_pct >= majority_quota_pct %}
+        <span class="badge-ok">✓ Satisfied ({{ coalition_pct }}%)</span>
+        {% else %}
+        <span class="badge-fail">✗ Not satisfied ({{ coalition_pct }}% &lt; {{ majority_quota_pct }}%)</span>
+        {% endif %}<br>
         <strong>Iterations:</strong> {{ iterations }}
     </p>
 </section>
@@ -39,17 +43,19 @@
                 <th>Ideal sentence</th>
                 <th>d(ideal → proposal)</th>
                 <th>d(ideal → status quo)</th>
-                <th>Voted</th>
+                <th>Prefers proposal</th>
+                <th>In coalition</th>
             </tr>
         </thead>
         <tbody>
             {% for row in proof_rows %}
-            <tr class="{{ 'row-yes' if row.voted_yes else 'row-no' }}">
+            <tr class="{{ 'row-yes' if row.in_coalition else 'row-no' }}">
                 <td>{{ row.name }}</td>
                 <td>{{ row.ideal }}</td>
                 <td>{{ row.d_proposal }}</td>
                 <td>{{ row.d_sq }}</td>
-                <td>{{ '✓ YES' if row.voted_yes else '✗ NO' }}</td>
+                <td>{{ '✓' if row.prefers_proposal else '✗' }}</td>
+                <td>{{ '★ Yes' if row.in_coalition else '—' }}</td>
             </tr>
             {% endfor %}
         </tbody>

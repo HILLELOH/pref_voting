@@ -2,43 +2,266 @@
 {% block title %}Processing{% endblock %}
 {% block content %}
 
-<section class="card" style="text-align:center; padding:3rem 2rem;">
-    <div id="spinner" style="font-size:2.5rem; margin-bottom:1rem;">⏳</div>
-    <h2 style="margin-bottom:0.5rem;">Running coalition formation…</h2>
-    <p class="hint" style="margin-bottom:2rem;">
-        The algorithm is generating compromise sentences and merging coalitions.
-        This may take up to a few minutes depending on the number of agents.
-    </p>
-    <div style="background:#f0f4ff; border-radius:8px; padding:1rem; display:inline-block; min-width:220px;">
-        <span id="status-text" style="color:#16213e; font-weight:600;">Processing…</span>
+<style>
+#wait-shell { max-width: 680px; margin: 0 auto; }
+
+/* Header card */
+#header-card { text-align:center; padding: 2rem 2rem 1.5rem; margin-bottom: 1rem; }
+#header-card h2 { margin-bottom: 0.3rem; }
+#header-card .hint { margin-bottom: 1.5rem; }
+
+/* Progress bar */
+.pbar-wrap { margin-bottom: 0.3rem; }
+.pbar-meta { display:flex; justify-content:space-between; font-size:0.78rem; color:#64748b; margin-bottom:0.35rem; }
+.pbar-track { background:#e2e8f0; border-radius:999px; height:8px; overflow:hidden; }
+.pbar-fill  { height:100%; width:0%; border-radius:999px; transition:width 0.6s ease;
+              background: linear-gradient(90deg,#3b82f6,#10b981); }
+
+/* Current activity card */
+#activity-card { padding: 1.25rem 1.5rem; margin-bottom: 1rem; border-left: 4px solid #3b82f6; }
+#activity-card.state-generating { border-color: #f59e0b; }
+#activity-card.state-voting     { border-color: #8b5cf6; }
+#activity-card.state-merged     { border-color: #10b981; }
+#activity-card.state-rejected   { border-color: #ef4444; }
+#activity-card.state-majority   { border-color: #10b981; background:#f0fdf4; }
+
+.activity-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+                  text-transform: uppercase; color: #94a3b8; margin-bottom: 0.5rem; }
+.activity-title { font-size: 1rem; font-weight: 600; color: #1e293b; margin-bottom: 0.75rem; }
+
+.rep-pair { display:flex; gap:0.6rem; align-items:stretch; margin-bottom:0.75rem; flex-wrap:wrap; }
+.rep-bubble { flex:1; min-width:120px; background:#f8fafc; border:1px solid #e2e8f0;
+              border-radius:6px; padding:0.5rem 0.75rem; font-size:0.82rem; color:#334155;
+              font-style:italic; }
+.rep-bubble .rep-label { font-size:0.68rem; font-weight:700; color:#94a3b8;
+                          font-style:normal; text-transform:uppercase; margin-bottom:0.25rem; }
+.vs-sep { display:flex; align-items:center; color:#94a3b8; font-weight:700; font-size:0.85rem; }
+
+.proposal-box { background:#f0f4ff; border:1px solid #c7d7fd; border-radius:6px;
+                padding:0.6rem 0.9rem; font-size:0.88rem; color:#1e3a8a; margin-bottom:0.5rem; }
+.proposal-box .prop-label { font-size:0.68rem; font-weight:700; color:#6366f1;
+                             text-transform:uppercase; margin-bottom:0.25rem; }
+
+.vote-row { display:flex; gap:1rem; font-size:0.82rem; }
+.vote-chip { padding:0.2rem 0.6rem; border-radius:4px; font-weight:600; }
+.vote-ok  { background:#dcfce7; color:#166534; }
+.vote-no  { background:#fee2e2; color:#991b1b; }
+
+/* Event history */
+#history-card { padding: 1.25rem 1.5rem; }
+#history-card h3 { font-size:0.82rem; font-weight:700; text-transform:uppercase;
+                   letter-spacing:0.06em; color:#94a3b8; margin-bottom:0.75rem; }
+#event-list { display:flex; flex-direction:column; gap:0.4rem;
+              max-height:240px; overflow-y:auto; }
+.ev-row { display:flex; align-items:flex-start; gap:0.6rem; padding:0.45rem 0.6rem;
+          border-radius:6px; font-size:0.8rem; background:#f8fafc; border:1px solid #e9edf3; }
+.ev-icon { font-size:0.9rem; line-height:1.2; flex-shrink:0; }
+.ev-body { flex:1; line-height:1.4; }
+.ev-body strong { color:#1e293b; }
+.ev-body .ev-prop { font-style:italic; color:#475569; font-size:0.77rem; margin-top:0.15rem; }
+.ev-iter { font-size:0.68rem; color:#94a3b8; flex-shrink:0; padding-top:0.1rem; }
+</style>
+
+<div id="wait-shell">
+
+  <!-- Header -->
+  <section class="card" id="header-card">
+    <div id="spinner" style="font-size:2rem; margin-bottom:0.6rem;">⏳</div>
+    <h2>Running coalition formation…</h2>
+    <p class="hint">Generating compromises and merging coalitions. This may take a few minutes.</p>
+
+    <div class="pbar-wrap">
+      <div class="pbar-meta">
+        <span>Iteration <strong id="iter-num">—</strong> of ~<strong id="iter-max">—</strong></span>
+        <span id="coalition-label" style="color:#64748b;">—</span>
+      </div>
+      <div class="pbar-track"><div id="pbar" class="pbar-fill"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:#94a3b8;margin-top:0.25rem;">
+        <span>Start</span>
+        <span id="quota-label"></span>
+      </div>
     </div>
-</section>
+  </section>
+
+  <!-- Current activity -->
+  <section class="card" id="activity-card">
+    <div class="activity-label" id="act-label">Initialising…</div>
+    <div class="activity-title" id="act-title">Waiting for first iteration</div>
+    <div id="act-body"></div>
+  </section>
+
+  <!-- Event history -->
+  <section class="card" id="history-card" style="display:none;">
+    <h3>Event history</h3>
+    <div id="event-list"></div>
+  </section>
+
+</div>
 
 <script>
 const jobId = {{ job_id | tojson }};
+let knownEventCount = 0;
 let dots = 0;
 
+// ── helpers ──────────────────────────────────────────────────────────────────
+function truncate(s, n) {
+    return s && s.length > n ? s.slice(0, n) + '…' : (s || '');
+}
+
+// ── update progress bar ───────────────────────────────────────────────────────
+function updateBar(p) {
+    const maxIter = p.n_agents * 5;
+    document.getElementById('iter-num').textContent  = p.iteration;
+    document.getElementById('iter-max').textContent  = maxIter;
+    document.getElementById('pbar').style.width      = Math.min(100, p.iteration / maxIter * 100) + '%';
+    document.getElementById('coalition-label').textContent =
+        p.coalitions + ' coalition' + (p.coalitions !== 1 ? 's' : '') + ' remaining';
+    document.getElementById('quota-label').textContent =
+        Math.round(p.majority_quota * 100) + '% majority needed';
+}
+
+// ── update "current activity" card ───────────────────────────────────────────
+function setActivity(p) {
+    const card  = document.getElementById('activity-card');
+    const label = document.getElementById('act-label');
+    const title = document.getElementById('act-title');
+    const body  = document.getElementById('act-body');
+
+    card.className = 'card state-' + p.event;
+
+    if (p.event === 'generating') {
+        label.textContent = `Iteration ${p.iteration} · Generating compromise`;
+        title.textContent = 'LLM is writing a compromise sentence…';
+        body.innerHTML = repPair(p);
+    } else if (p.event === 'voting') {
+        label.textContent = `Iteration ${p.iteration} · Voting`;
+        title.textContent = 'Agents are evaluating the proposal';
+        body.innerHTML = repPair(p) + proposalBox(p.proposal);
+    } else if (p.event === 'merged') {
+        label.textContent = `Iteration ${p.iteration} · Merged ✓`;
+        title.textContent = `Coalition grew to ${p.merged_size} / ${p.n_agents} agents`;
+        body.innerHTML = proposalBox(p.proposal) + voteRow(p);
+    } else if (p.event === 'rejected') {
+        label.textContent = `Iteration ${p.iteration} · Rejected`;
+        title.textContent = 'Coalitions did not reach internal majority';
+        body.innerHTML = proposalBox(p.proposal) + voteRow(p);
+    } else if (p.event === 'majority') {
+        label.textContent = `Iteration ${p.iteration} · Majority reached 🏆`;
+        title.textContent = `${p.merged_size} / ${p.n_agents} agents agreed — done!`;
+        body.innerHTML = proposalBox(p.proposal);
+    }
+}
+
+function repPair(p) {
+    if (!p.rep_i && !p.rep_j) return '';
+    return `<div class="rep-pair">
+      <div class="rep-bubble">
+        <div class="rep-label">Coalition A (${p.size_i || 1} agent${p.size_i !== 1 ? 's' : ''})</div>
+        ${esc(truncate(p.rep_i, 90))}
+      </div>
+      <div class="vs-sep">↔</div>
+      <div class="rep-bubble">
+        <div class="rep-label">Coalition B (${p.size_j || 1} agent${p.size_j !== 1 ? 's' : ''})</div>
+        ${esc(truncate(p.rep_j, 90))}
+      </div>
+    </div>`;
+}
+
+function proposalBox(proposal) {
+    if (!proposal) return '';
+    return `<div class="proposal-box">
+      <div class="prop-label">Proposed compromise</div>
+      ${esc(proposal)}
+    </div>`;
+}
+
+function voteRow(p) {
+    if (p.yes_i == null) return '';
+    const aOk = p.yes_i / p.total_i > 0.5;
+    const bOk = p.yes_j / p.total_j > 0.5;
+    return `<div class="vote-row">
+      <span class="vote-chip ${aOk ? 'vote-ok' : 'vote-no'}">A: ${p.yes_i}/${p.total_i} ${aOk ? '✓' : '✗'}</span>
+      <span class="vote-chip ${bOk ? 'vote-ok' : 'vote-no'}">B: ${p.yes_j}/${p.total_j} ${bOk ? '✓' : '✗'}</span>
+    </div>`;
+}
+
+function esc(s) {
+    return String(s || '')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── append new events to history ──────────────────────────────────────────────
+const ICONS = { generating:'🔄', voting:'🗳️', merged:'✅', rejected:'❌', majority:'🏆' };
+const TERMINAL = new Set(['merged','rejected','majority']);
+
+function appendEvents(events) {
+    if (!events || events.length === 0) return;
+    const newEvents = events.slice(knownEventCount);
+    if (newEvents.length === 0) return;
+    knownEventCount = events.length;
+
+    const list = document.getElementById('event-list');
+    document.getElementById('history-card').style.display = 'block';
+
+    newEvents.forEach(e => {
+        if (!TERMINAL.has(e.event)) return;
+        const div = document.createElement('div');
+        div.className = 'ev-row';
+        let bodyHtml = '';
+        if (e.event === 'merged') {
+            bodyHtml = `<strong>Merged</strong> — coalition of <strong>${e.merged_size}/${e.n_agents}</strong> agents`;
+        } else if (e.event === 'rejected') {
+            bodyHtml = `<strong>Rejected</strong> — A: ${e.yes_i}/${e.total_i}, B: ${e.yes_j}/${e.total_j}`;
+        } else if (e.event === 'majority') {
+            bodyHtml = `<strong>Majority reached</strong> — ${e.merged_size}/${e.n_agents} agents`;
+        }
+        if (e.proposal) {
+            bodyHtml += `<div class="ev-prop">"${esc(truncate(e.proposal, 80))}"</div>`;
+        }
+        div.innerHTML = `
+          <span class="ev-icon">${ICONS[e.event] || '•'}</span>
+          <span class="ev-body">${bodyHtml}</span>
+          <span class="ev-iter">iter ${e.iteration}</span>`;
+        list.insertBefore(div, list.firstChild);
+    });
+
+    // keep max 12 visible
+    while (list.children.length > 12) list.removeChild(list.lastChild);
+}
+
+// ── poll ──────────────────────────────────────────────────────────────────────
 function poll() {
     fetch('/status/' + jobId)
         .then(r => r.json())
         .then(data => {
             if (data.status === 'done') {
-                document.getElementById('status-text').textContent = 'Done! Redirecting…';
-                document.getElementById('spinner').textContent = '✓';
+                document.getElementById('spinner').textContent = '🏆';
+                document.getElementById('act-label').textContent = 'Done!';
+                document.getElementById('act-title').textContent = 'Redirecting to results…';
+                document.getElementById('pbar').style.width = '100%';
                 window.location.href = '/result/' + jobId;
-            } else if (data.status === 'error') {
-                document.getElementById('status-text').textContent = 'Error: ' + (data.message || 'unknown');
-                document.getElementById('spinner').textContent = '✗';
-            } else {
-                dots = (dots + 1) % 4;
-                document.getElementById('status-text').textContent = 'Processing' + '.'.repeat(dots + 1);
-                setTimeout(poll, 2000);
+                return;
             }
+            if (data.status === 'error') {
+                document.getElementById('spinner').textContent = '✗';
+                document.getElementById('act-label').textContent = 'Error';
+                document.getElementById('act-title').textContent = data.message || 'Unknown error';
+                return;
+            }
+            // still processing
+            if (data.progress) {
+                updateBar(data.progress);
+                setActivity(data.progress);
+            }
+            appendEvents(data.events);
+            dots = (dots + 1) % 4;
+            document.getElementById('spinner').textContent = ['⏳','⌛','⏳','⌛'][dots];
+            setTimeout(poll, 2000);
         })
         .catch(() => setTimeout(poll, 3000));
 }
 
-setTimeout(poll, 2000);
+setTimeout(poll, 1500);
 </script>
 
 {% endblock %}

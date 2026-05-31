@@ -36,23 +36,23 @@ def _get_st_model():
 # ============================================================================
 # LLAMA-CPP MODEL (per-request, not global - FIX FOR SECOND RUN CRASH)
 # ============================================================================
-_MODEL_FILENAME = "qwen2.5-0.5b-instruct-q3_k_m.gguf"
+_MODEL_FILENAME = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
 _MODEL_SEARCH_PATHS = [
     os.path.join(os.path.dirname(__file__), "models", _MODEL_FILENAME),
     "/home/hilleloh/app/models/" + _MODEL_FILENAME,
 ]
 
-def _get_qwen_model():
-    """Load Qwen locally via llama-cpp (fresh instance per request)."""
+def _get_llm_model():
+    """Load Llama locally via llama-cpp (fresh instance per request)."""
     from llama_cpp import Llama
 
     model_path = next((p for p in _MODEL_SEARCH_PATHS if os.path.exists(p)), None)
     if model_path is None:
         raise FileNotFoundError(
-            f"Qwen model not found. Searched: {_MODEL_SEARCH_PATHS}"
+            f"Llama model not found. Searched: {_MODEL_SEARCH_PATHS}"
         )
 
-    logger.info(f"Loading Qwen2.5-0.5B from {model_path}…")
+    logger.info(f"Loading Llama-3.2-1B from {model_path}…")
     try:
         return Llama(
             model_path=model_path,
@@ -99,18 +99,28 @@ def _max_consecutive_common_words(text: str, reference: str) -> int:
     return max_run
 
 
+_INCOMPLETE_ENDINGS = {
+    'a', 'an', 'the', 'with', 'for', 'to', 'in', 'on', 'at', 'by', 'of',
+    'and', 'or', 'but', 'if', 'as', 'from', 'while', 'that', 'which',
+    'into', 'during', 'before', 'after', 'both', 'its', 'their', 'our',
+    'this', 'these', 'those', 'also', 'while', 'though', 'since',
+}
+
 def _trim_to_max_words(text: str, max_words: int = 15) -> str:
-    """Truncate to max_words words, ending at last complete sentence if possible."""
+    """Truncate to max_words words, stripping trailing incomplete words."""
     words = text.split()
     if len(words) <= max_words:
         return text
-    trimmed = ' '.join(words[:max_words])
-    # Try to end at a sentence boundary within the trimmed text
-    for sep in ('. ', '! ', '? '):
-        idx = trimmed.rfind(sep)
-        if idx > 0:
-            return trimmed[:idx + 1]
-    return trimmed.rstrip(',;') + '.'
+    words = words[:max_words]
+    # Strip trailing articles/prepositions/conjunctions that leave sentence dangling
+    while words and words[-1].rstrip('.,;:!?"\'').lower() in _INCOMPLETE_ENDINGS:
+        words.pop()
+    if not words:
+        return ' '.join(text.split()[:max_words]).rstrip(',;') + '.'
+    result = ' '.join(words)
+    if result[-1] not in '.!?':
+        result = result.rstrip(',;') + '.'
+    return result
 
 
 def _is_valid_compromise(candidate: str, all_ideals: list, max_common: int = 2) -> bool:
@@ -160,13 +170,13 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
     return [sentence1, sentence2][:n]
 
 
-def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> list[str]:
-    """Call local Qwen2.5-0.5B for compromise generation."""
-    logger.info(f"Calling Qwen for {n} compromise candidates...")
+def _call_llm_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> list[str]:
+    """Call local Llama for compromise generation."""
+    logger.info(f"Calling Llama for {n} compromise candidates...")
 
     _own_llm = llm is None
     if _own_llm:
-        llm = _get_qwen_model()
+        llm = _get_llm_model()
     try:
         prompt = (
             f'Two agents disagree on policy:\n'
@@ -187,7 +197,7 @@ def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> li
         )
 
         raw_text = response["choices"][0]["text"]
-        logger.info(f"Qwen raw output: {raw_text!r}")
+        logger.info(f"Llama raw output: {raw_text!r}")
 
         compromises = _parse_json_response(raw_text, n, sentence1, sentence2)
 
@@ -200,10 +210,8 @@ def _call_qwen_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> li
             and s2_lower not in c.lower()
         ]
         if not filtered:
-            logger.warning("Qwen only produced copies of input — using fallback blending")
-            words1 = sentence1.rstrip('.').split()
-            words2 = sentence2.rstrip('.').split()
-            filtered = [f"{' '.join(words1[:4])} and {words2[-1].lower()} sustainably."]
+            logger.warning("Llama only produced copies of input — using fallback blending")
+            filtered = ["Implement coordinated policies that address both goals for shared sustainable outcomes."]
 
         logger.info(f"Compromise(s): {filtered}")
         return filtered
@@ -247,6 +255,7 @@ def run_coalition_formation(
     sigma: float = 0.0,
     seed: Optional[int] = None,
     status_quo: str = "Do nothing about climate change.",
+    progress_callback=None,
 ) -> dict:
     """
     Run bottom-up coalition formation algorithm.
@@ -276,11 +285,23 @@ def run_coalition_formation(
     winning_coalition = None
     winning_sentence = None
 
-    llm = _get_qwen_model()
+    llm = _get_llm_model()
     try:
         while True:
             iteration += 1
-            logger.info(f"--- Iteration {iteration}  (coalitions: {len(coalitions)}) ---")
+            progress_msg = f"Iteration {iteration} | {len(coalitions)} coalitions remaining (need {majority_quota*100:.0f}% of {n_agents} agents)"
+            logger.info(f"--- {progress_msg} ---")
+            print(f"[{progress_msg}]", flush=True)
+            if progress_callback:
+                progress_callback({
+                    "iteration": iteration,
+                    "coalitions": len(coalitions),
+                    "n_agents": n_agents,
+                    "majority_quota": majority_quota,
+                    "event": "start",
+                    "proposal": None,
+                    "merged_size": None,
+                })
 
             if seed is not None:
                 random.seed(seed + iteration)
@@ -294,7 +315,22 @@ def run_coalition_formation(
             coal_i = coalitions[ci]
             coal_j = coalitions[cj]
 
-            candidates = _call_qwen_local(coal_i["representative"], coal_j["representative"], n=2, llm=llm)
+            if progress_callback:
+                progress_callback({
+                    "iteration": iteration,
+                    "coalitions": len(coalitions),
+                    "n_agents": n_agents,
+                    "majority_quota": majority_quota,
+                    "event": "generating",
+                    "rep_i": coal_i["representative"],
+                    "rep_j": coal_j["representative"],
+                    "size_i": len(coal_i["members"]),
+                    "size_j": len(coal_j["members"]),
+                    "proposal": None,
+                    "merged_size": None,
+                })
+
+            candidates = _call_llm_local(coal_i["representative"], coal_j["representative"], n=2, llm=llm)
 
             valid = [c for c in candidates if _is_valid_compromise(c, all_ideals)]
             if valid:
@@ -310,6 +346,21 @@ def run_coalition_formation(
                 if iteration > n_agents * 3:
                     break
                 continue
+
+            if progress_callback:
+                progress_callback({
+                    "iteration": iteration,
+                    "coalitions": len(coalitions),
+                    "n_agents": n_agents,
+                    "majority_quota": majority_quota,
+                    "event": "voting",
+                    "rep_i": coal_i["representative"],
+                    "rep_j": coal_j["representative"],
+                    "size_i": len(coal_i["members"]),
+                    "size_j": len(coal_j["members"]),
+                    "proposal": proposal,
+                    "merged_size": None,
+                })
 
             def coalition_accepts(members: list) -> tuple:
                 yes = sum(1 for idx in members if agents[idx].vote(proposal, status_quo)[0])
@@ -336,14 +387,51 @@ def run_coalition_formation(
                     coalitions.pop(idx)
                 coalitions.append(merged)
                 logger.info(f"Merged → coalition of {merged_count} agents, rep: '{proposal}'")
+                print(f"  ✓ Merged! Coalition now has {merged_count}/{n_agents} agents.", flush=True)
+                if progress_callback:
+                    progress_callback({
+                        "iteration": iteration,
+                        "coalitions": len(coalitions),
+                        "n_agents": n_agents,
+                        "majority_quota": majority_quota,
+                        "event": "merged",
+                        "proposal": proposal,
+                        "merged_size": merged_count,
+                        "yes_i": yes_i, "total_i": total_i,
+                        "yes_j": yes_j, "total_j": total_j,
+                    })
 
                 if merged_count / n_agents >= majority_quota:
                     winning_coalition = merged
                     winning_sentence = proposal
                     logger.info(f"Majority reached: {merged_count}/{n_agents} >= {majority_quota}")
+                    print(f"  ★ Majority reached: {merged_count}/{n_agents} agents agreed!", flush=True)
+                    if progress_callback:
+                        progress_callback({
+                            "iteration": iteration,
+                            "coalitions": len(coalitions),
+                            "n_agents": n_agents,
+                            "majority_quota": majority_quota,
+                            "event": "majority",
+                            "proposal": proposal,
+                            "merged_size": merged_count,
+                        })
                     break
             else:
                 logger.info(f"Merge rejected: i_accepts={i_accepts}, j_accepts={j_accepts}")
+                print(f"  ✗ Merge rejected (i={yes_i}/{total_i}, j={yes_j}/{total_j}).", flush=True)
+                if progress_callback:
+                    progress_callback({
+                        "iteration": iteration,
+                        "coalitions": len(coalitions),
+                        "n_agents": n_agents,
+                        "majority_quota": majority_quota,
+                        "event": "rejected",
+                        "proposal": proposal,
+                        "merged_size": None,
+                        "yes_i": yes_i, "total_i": total_i,
+                        "yes_j": yes_j, "total_j": total_j,
+                    })
 
             if iteration > n_agents * 5:
                 logger.warning("Max iterations reached")

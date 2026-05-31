@@ -5,45 +5,29 @@
 {% if show_modal %}
 <div id="setup-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
   <div style="background:white; border-radius:10px; max-width:580px; width:90%; padding:2rem; box-shadow:0 8px 32px rgba(0,0,0,0.2); position:relative; max-height:90vh; overflow-y:auto;">
-    <h2 style="margin-bottom:0.5rem; color:#16213e;">Before you start</h2>
+    <h2 style="margin-bottom:0.5rem; color:#16213e;">How this works</h2>
     <p style="color:#555; margin-bottom:1.5rem; font-size:0.95rem;">
-      This app uses an LLM to generate compromise sentences. Choose one option below.
+      This app runs <strong>entirely locally</strong> using a built-in language model to generate compromise sentences.
+      No API key or internet connection required after setup.
     </p>
-
-    <p style="font-size:0.85rem; color:#666; margin-bottom:1rem;">
-      Priority: <strong>OpenRouter key</strong> → <strong>Ollama</strong> → <strong>built-in model</strong> → template fallback.
-    </p>
-
-    <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:0.75rem;">
-      <strong>Option 1 — OpenRouter API key (cloud, free tier)</strong>
-      <ol style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.5rem 1.2rem; padding:0; line-height:1.7;">
-        <li>Sign up at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>.</li>
-        <li>Go to <strong>Settings → Keys</strong> and click <strong>Create Key</strong>.</li>
-        <li>Copy the key (starts with <code>sk-or-</code>).</li>
-        <li>Paste it in <em>Advanced Options → OpenRouter API Key</em> below.</li>
-      </ol>
-      <p style="font-size:0.85rem; color:#e05c00; margin:0;">⚠ Free models are rate-limited. Paid credits unlock faster models.</p>
-    </div>
 
     <div style="border:2px solid #4a90e2; border-radius:8px; padding:1.2rem; margin-bottom:0.75rem;">
-      <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
-        <span style="background:#4a90e2; color:white; font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:600;">RECOMMENDED</span>
-        <strong>Option 2 — Ollama (local, free, unlimited)</strong>
+      <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.6rem;">
+        <span style="background:#4a90e2; color:white; font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:4px; font-weight:600;">BUILT-IN</span>
+        <strong>Llama 3.2 · 1B · Q4_K_M</strong>
       </div>
-      <p style="font-size:0.9rem; color:#444; margin-bottom:0.75rem;">No API key. Runs on your machine. One-time setup:</p>
-      <pre style="background:#f5f7fa; border-radius:6px; padding:0.75rem; font-size:0.85rem; overflow-x:auto;">brew install ollama
-ollama pull llama3.2
-brew services start ollama</pre>
+      <p style="font-size:0.9rem; color:#444; margin-bottom:0.6rem;">
+        The model file (<code>Llama-3.2-1B-Instruct-Q4_K_M.gguf</code>, ~700 MB) must be placed in
+        <code>models/</code> before the first run.
+      </p>
+      <pre style="background:#f5f7fa; border-radius:6px; padding:0.75rem; font-size:0.82rem; overflow-x:auto; margin:0;">hf download bartowski/Llama-3.2-1B-Instruct-GGUF \
+    Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+    --local-dir models/</pre>
     </div>
 
-    <div style="border:1px solid #ddd; border-radius:8px; padding:1.2rem; margin-bottom:1.5rem;">
-      <strong>Option 3 — Built-in model (no setup, ~400 MB download)</strong>
-      <p style="font-size:0.9rem; color:#444; margin:0.5rem 0 0.5rem;">
-        If Ollama isn't running and no API key is set, the app automatically downloads
-        <strong>Qwen2.5-0.5B</strong> (~398 MB) on the first run and runs it locally.
-        Slower than Ollama, but fully offline with zero configuration.
-      </p>
-      <p style="font-size:0.85rem; color:#444; margin:0;">Requires: <code>pip install llama-cpp-python huggingface_hub</code></p>
+    <div style="background:#fff8e1; border:1px solid #f0c040; border-radius:8px; padding:0.9rem 1.1rem; margin-bottom:1.5rem; font-size:0.87rem; color:#7a5c00;">
+      ⏱ <strong>Each run takes 3–10 minutes</strong> depending on the number of agents and iterations.
+      A live progress display will show what the algorithm is doing.
     </div>
 
     <div style="display:flex; align-items:center; justify-content:space-between;">
@@ -127,7 +111,7 @@ if (!localStorage.getItem('setup-seen')) {
             <div>
                 <label>
                     Majority quota
-                    <span class="hint">(fraction, e.g. 0.5 = 50%)</span>
+                    <span class="info-tip" data-tip="The minimum fraction of agents that must prefer the proposal over the status quo for it to win. For example, 0.5 means at least 50% of agents must agree. The algorithm stops as soon as a coalition of this size forms.">i</span>
                 </label>
                 <input type="number" name="majority_quota"
                     value="{{ form_data.majority_quota if form_data else '0.5' }}"
@@ -136,27 +120,11 @@ if (!localStorage.getItem('setup-seen')) {
             <div>
                 <label>
                     Sigma
-                    <span class="hint">(noise level, 0 = fully deterministic)</span>
+                    <span class="info-tip" data-tip="Noise added to agent vote distances. At 0 (default) voting is fully deterministic — an agent votes yes only if the proposal is strictly closer to its ideal than the status quo. Higher values make agents more likely to vote yes even for slightly worse proposals.">i</span>
                 </label>
                 <input type="number" name="sigma"
                     value="{{ form_data.sigma if form_data else '0' }}"
                     step="0.1" min="0">
-            </div>
-            <!-- <div>
-                <label>
-                    Seed
-                    <span class="hint">(for reproducibility, optional)</span>
-                </label>
-                <input type="number" name="seed"
-                    value="{{ form_data.seed if form_data else '' }}"
-                    placeholder="optional">
-            </div> -->
-            <div>
-                <label>
-                    OpenRouter API Key
-                    <span class="hint">(optional - leave empty to use Ollama)</span>
-                </label>
-                <input type="password" name="api_key" placeholder="sk-or-...">
             </div>
         </div>
     </details>
