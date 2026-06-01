@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import threading
+from functools import lru_cache
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -74,19 +75,29 @@ def _get_llm_model():
 # ============================================================================
 
 def _cosine_similarity(a, b):
-    """Compute cosine similarity between two vectors."""
     import numpy as np
-    a, b = np.array(a), np.array(b)
+    a, b = np.asarray(a, dtype=np.float32), np.asarray(b, dtype=np.float32)
     dot = np.dot(a, b)
     norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
     if norm_a == 0 or norm_b == 0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return float(dot / (norm_a * norm_b))
 
 
 def _cosine_dissimilarity(a, b):
-    """Compute cosine dissimilarity (1 - similarity)."""
     return 1 - _cosine_similarity(a, b)
+
+
+def _batch_cosine_dissimilarity(matrix: "np.ndarray", vec: "np.ndarray") -> "np.ndarray":
+    """Dissimilarity of each row in matrix vs vec. Single vectorized op."""
+    import numpy as np
+    norms_m = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norm_v = np.linalg.norm(vec)
+    if norm_v == 0:
+        return np.ones(len(matrix), dtype=np.float32)
+    safe = np.where(norms_m == 0, 1.0, norms_m)
+    sims = (matrix / safe) @ vec / norm_v
+    return 1.0 - sims
 
 
 def _max_consecutive_common_words(text: str, reference: str) -> int:
@@ -135,11 +146,12 @@ def _is_valid_compromise(candidate: str, all_ideals: list, max_common: int = 2) 
     return True
 
 
-def _encode_sentence(sentence: str) -> list[float]:
-    """Encode a sentence to embeddings."""
+@lru_cache(maxsize=4096)
+def _encode_sentence(sentence: str) -> tuple:
+    """Encode sentence to embeddings. Cached — same string never re-encoded."""
     st_model = _get_st_model()
     embedding = st_model.encode(sentence, convert_to_numpy=True)
-    return embedding.tolist()
+    return tuple(embedding.tolist())
 
 
 def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> list[str]:
@@ -238,26 +250,28 @@ def _call_llm_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> lis
 
 class Agent:
     """Represents an agent with an ideal proposal and voting logic."""
-    
+
     def __init__(self, name: str, ideal: str):
+        import numpy as np
         self.name = name
         self.ideal = ideal
-        self.ideal_embedding = _encode_sentence(ideal)
-    
+        # Store as numpy array for vectorized ops; lru_cache returns tuple
+        self.ideal_embedding = np.asarray(_encode_sentence(ideal), dtype=np.float32)
+
     def vote(self, proposal: str, status_quo: str) -> tuple:
         """Vote yes if proposal is closer to ideal than status quo."""
         proposal_embedding = _encode_sentence(proposal)
         status_quo_embedding = _encode_sentence(status_quo)
-        
+
         d_proposal = _cosine_dissimilarity(self.ideal_embedding, proposal_embedding)
         d_status_quo = _cosine_dissimilarity(self.ideal_embedding, status_quo_embedding)
-        
+
         voted = d_proposal < d_status_quo
         logger.info(
             f"   {self.name}: d(ideal→proposal)={d_proposal:.4f}, "
             f"d(ideal→status_quo)={d_status_quo:.4f}, voted={voted}"
         )
-        
+
         return voted, d_proposal, d_status_quo
 
 
@@ -401,7 +415,18 @@ def run_coalition_formation(
                 })
 
             def coalition_accepts(members: list) -> tuple:
-                yes = sum(1 for idx in members if agents[idx].vote(proposal, status_quo)[0])
+                import numpy as np
+                ideal_matrix = np.stack([agents[idx].ideal_embedding for idx in members])
+                prop_vec = np.asarray(_encode_sentence(proposal), dtype=np.float32)
+                sq_vec = np.asarray(_encode_sentence(status_quo), dtype=np.float32)
+                d_prop = _batch_cosine_dissimilarity(ideal_matrix, prop_vec)
+                d_sq = _batch_cosine_dissimilarity(ideal_matrix, sq_vec)
+                yes = int(np.sum(d_prop < d_sq))
+                for k, idx in enumerate(members):
+                    logger.info(
+                        f"   {agents[idx].name}: d(ideal→proposal)={d_prop[k]:.4f}, "
+                        f"d(ideal→status_quo)={d_sq[k]:.4f}, voted={d_prop[k] < d_sq[k]}"
+                    )
                 return yes, len(members)
 
             yes_i, total_i = coalition_accepts(coal_i["members"])
@@ -486,15 +511,21 @@ def run_coalition_formation(
         winning_coalition = max(coalitions, key=lambda c: len(c["members"]))
         winning_sentence = winning_coalition["representative"]
 
-    voting_results = []
-    for agent in agents:
-        voted, d_prop, d_sq = agent.vote(winning_sentence, status_quo)
-        voting_results.append({
-            "name": agent.name,
-            "d_proposal": d_prop,
-            "d_status_quo": d_sq,
-            "voted": voted,
-        })
+    import numpy as np
+    ideal_matrix = np.stack([a.ideal_embedding for a in agents])
+    prop_vec = np.asarray(_encode_sentence(winning_sentence), dtype=np.float32)
+    sq_vec = np.asarray(_encode_sentence(status_quo), dtype=np.float32)
+    d_props = _batch_cosine_dissimilarity(ideal_matrix, prop_vec)
+    d_sqs = _batch_cosine_dissimilarity(ideal_matrix, sq_vec)
+    voting_results = [
+        {
+            "name": agents[i].name,
+            "d_proposal": float(d_props[i]),
+            "d_status_quo": float(d_sqs[i]),
+            "voted": bool(d_props[i] < d_sqs[i]),
+        }
+        for i in range(len(agents))
+    ]
 
     coalition_names = [agents[idx].name for idx in winning_coalition["members"]]
     logger.info(f"Result sentence: '{winning_sentence}'")
