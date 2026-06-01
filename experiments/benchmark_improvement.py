@@ -11,7 +11,6 @@ import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from experiments_csv import Experiment
-from experiments_csv.plot_results import multi_plot_results
 from coalition_formation import run_coalition_formation
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
@@ -90,6 +89,7 @@ if __name__ == "__main__":
 
     # Combine before/after into single CSV for comparison plot
     if os.path.exists(BEFORE_CSV) and os.path.exists(AFTER_CSV):
+        import matplotlib.pyplot as plt
         df_before = pd.read_csv(BEFORE_CSV)
         df_after = pd.read_csv(AFTER_CSV)
         df_before["version"] = "before"
@@ -98,18 +98,23 @@ if __name__ == "__main__":
         combined_path = os.path.join(RESULTS_DIR, "comparison.csv")
         combined.to_csv(combined_path, index=False)
 
-        multi_plot_results(
-            results_csv_file=combined_path,
-            filter={"majority_quota": 0.5},
-            x_field="n_agents",
-            y_field="runtime",
-            z_field="version",
-            mean=True,
-            subplot_field=None,
-            subplot_rows=1,
-            subplot_cols=1,
-            save_to_file=os.path.join(RESULTS_DIR, "before_vs_after_runtime.png"),
-        )
-        print(f"Comparison plot saved to {RESULTS_DIR}/before_vs_after_runtime.png")
+        fig, ax = plt.subplots(figsize=(7, 4))
+        for version, style in [("before", "--"), ("after", "-")]:
+            subset = (
+                combined[combined["version"] == version]
+                .groupby("n_agents")["runtime"]
+                .mean()
+            )
+            ax.plot(subset.index, subset.values, marker="o", linestyle=style, label=version)
+        ax.set_xlabel("Number of agents")
+        ax.set_ylabel("Runtime (seconds)")
+        ax.set_title("Runtime before vs after optimization (mean over all quotas/seeds)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out = os.path.join(RESULTS_DIR, "before_vs_after_runtime.png")
+        fig.savefig(out, dpi=150)
+        plt.close(fig)
+        print(f"Comparison plot saved to {out}")
     else:
         print("Run experiments/benchmark.py first to generate before-optimization results.")
