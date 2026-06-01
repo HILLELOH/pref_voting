@@ -267,15 +267,23 @@ def run_coalition_formation(
     sigma: float = 0.0,
     seed: Optional[int] = None,
     status_quo: str = "Do nothing about climate change.",
+    coalition_discipline: bool = False,
+    discipline_quota: float = 0.5,
     progress_callback=None,
 ) -> dict:
     """
-    Run bottom-up coalition formation algorithm.
+    Run bottom-up coalition formation algorithm (Briman, Shapiro, Talmon 2024).
 
-    Each agent starts as individual coalition. Each iteration: pick 2 coalitions,
-    generate LLM compromise, each coalition votes internally. If both accept
-    (strict majority within each group), merge. Continue until merged coalition
-    reaches majority_quota of all agents.
+    Per Section 2.2 of the paper, two constitutions are supported:
+    - No Coalition Discipline (Q=0): each agent independently moves to dp if they
+      approve the proposal; rejecters stay in their old coalition (partial splits).
+    - Coalition Discipline (Q>0): a coalition only splits if >= discipline_quota
+      fraction approve; if threshold met, approvers move to dp and rejecters stay;
+      if threshold not met, the entire coalition stays put.
+
+    The new coalition structure after each step is D' = D \ {di, dj} u {d'i, d'j, dp}
+    where d'i, d'j are the remnant sub-coalitions and dp is the new compromise coalition.
+    Empty coalitions are dropped. Halting when any coalition reaches majority_quota.
     """
     import random
     import numpy as np
@@ -284,7 +292,11 @@ def run_coalition_formation(
     n_agents = len(agents_info)
     agents = [Agent(info["name"], info["ideal"]) for info in agents_info]
 
-    logger.info(f"Run: {n_agents} agents, majority_quota={majority_quota}, sigma={sigma}, seed={seed}, status_quo='{status_quo}'")
+    logger.info(
+        f"Run: {n_agents} agents, majority_quota={majority_quota}, sigma={sigma}, "
+        f"seed={seed}, coalition_discipline={coalition_discipline}, "
+        f"discipline_quota={discipline_quota}, status_quo='{status_quo}'"
+    )
     for i, info in enumerate(agents_info, 1):
         logger.info(f"   Agent {i-1} ({info['name']}): '{info['ideal']}'")
 
@@ -318,6 +330,28 @@ def run_coalition_formation(
                 "first_idx": min(c["members"]),
             })
         return pts
+
+    def _apply_constitution(coal: dict) -> tuple[list, list]:
+        """
+        Apply constitution to a coalition given a proposal and status_quo.
+        Returns (movers, stayers) per Definition 3 and Section 2.2.
+        - No discipline: each agent independently moves if vote=1.
+        - With discipline: if >= discipline_quota fraction approve,
+          approvers move; otherwise nobody moves.
+        """
+        approvers = [idx for idx in coal["members"] if agents[idx].vote(proposal, status_quo)[0]]
+        if not coalition_discipline:
+            # Q=0: independent decision, no threshold
+            stayers = [idx for idx in coal["members"] if idx not in set(approvers)]
+            return approvers, stayers
+        else:
+            # Q>0: threshold must be met for the split to happen
+            if len(approvers) / len(coal["members"]) >= discipline_quota:
+                stayers = [idx for idx in coal["members"] if idx not in set(approvers)]
+                return approvers, stayers
+            else:
+                return [], list(coal["members"])  # nobody moves
+
     iteration = 0
     winning_coalition = None
     winning_sentence = None
@@ -400,32 +434,51 @@ def run_coalition_formation(
                     "merged_size": None,
                 })
 
-            def coalition_accepts(members: list) -> tuple:
-                yes = sum(1 for idx in members if agents[idx].vote(proposal, status_quo)[0])
-                return yes, len(members)
+            # Apply constitution to each coalition independently (paper Section 2.2)
+            movers_i, stayers_i = _apply_constitution(coal_i)
+            movers_j, stayers_j = _apply_constitution(coal_j)
+            yes_i, total_i = len(movers_i), len(coal_i["members"])
+            yes_j, total_j = len(movers_j), len(coal_j["members"])
 
-            yes_i, total_i = coalition_accepts(coal_i["members"])
-            yes_j, total_j = coalition_accepts(coal_j["members"])
-            merged_count = total_i + total_j
+            dp_members = movers_i + movers_j  # new compromise coalition
+            merged_count = len(dp_members)
 
             logger.info(
                 f"Vote result: yes_i={yes_i}/{total_i}  yes_j={yes_j}/{total_j}  "
-                f"merged={merged_count}"
+                f"dp={merged_count}"
             )
 
-            i_accepts = yes_i / total_i > 0.5
-            j_accepts = yes_j / total_j > 0.5
-
-            if i_accepts and j_accepts:
-                merged = {
-                    "members": coal_i["members"] + coal_j["members"],
-                    "representative": proposal,
-                }
+            if merged_count == 0:
+                logger.info("No agents moved to new coalition.")
+                print(f"  ✗ No movement (i={yes_i}/{total_i}, j={yes_j}/{total_j}).", flush=True)
+                if progress_callback:
+                    progress_callback({
+                        "iteration": iteration,
+                        "coalitions": len(coalitions),
+                        "n_agents": n_agents,
+                        "majority_quota": majority_quota,
+                        "event": "rejected",
+                        "proposal": proposal,
+                        "merged_size": None,
+                        "yes_i": yes_i, "total_i": total_i,
+                        "yes_j": yes_j, "total_j": total_j,
+                    })
+            else:
+                # Build D' = D \ {di, dj} u {d'i, d'j, dp}  (drop empty coalitions)
                 for idx in sorted([ci, cj], reverse=True):
                     coalitions.pop(idx)
-                coalitions.append(merged)
-                logger.info(f"Merged → coalition of {merged_count} agents, rep: '{proposal}'")
-                print(f"  ✓ Merged! Coalition now has {merged_count}/{n_agents} agents.", flush=True)
+                if stayers_i:
+                    coalitions.append({"members": stayers_i, "representative": coal_i["representative"]})
+                if stayers_j:
+                    coalitions.append({"members": stayers_j, "representative": coal_j["representative"]})
+                dp = {"members": dp_members, "representative": proposal}
+                coalitions.append(dp)
+
+                logger.info(
+                    f"Coalition split/merge: dp={merged_count}, "
+                    f"stayers_i={len(stayers_i)}, stayers_j={len(stayers_j)}, rep: '{proposal}'"
+                )
+                print(f"  ✓ New coalition dp has {merged_count}/{n_agents} agents.", flush=True)
                 if progress_callback:
                     progress_callback({
                         "iteration": iteration,
@@ -440,11 +493,16 @@ def run_coalition_formation(
                         "coalitions_2d": _snap_2d(),
                     })
 
-                if merged_count / n_agents >= majority_quota:
-                    winning_coalition = merged
-                    winning_sentence = proposal
-                    logger.info(f"Majority reached: {merged_count}/{n_agents} >= {majority_quota}")
-                    print(f"  ★ Majority reached: {merged_count}/{n_agents} agents agreed!", flush=True)
+                # Check halting: any coalition >= majority_quota of all agents
+                for c in coalitions:
+                    if len(c["members"]) / n_agents >= majority_quota:
+                        winning_coalition = c
+                        winning_sentence = c["representative"]
+                        break
+
+                if winning_coalition is not None:
+                    logger.info(f"Majority reached: {len(winning_coalition['members'])}/{n_agents} >= {majority_quota}")
+                    print(f"  ★ Majority reached: {len(winning_coalition['members'])}/{n_agents} agents agreed!", flush=True)
                     if progress_callback:
                         progress_callback({
                             "iteration": iteration,
@@ -452,26 +510,11 @@ def run_coalition_formation(
                             "n_agents": n_agents,
                             "majority_quota": majority_quota,
                             "event": "majority",
-                            "proposal": proposal,
-                            "merged_size": merged_count,
+                            "proposal": winning_sentence,
+                            "merged_size": len(winning_coalition["members"]),
                             "coalitions_2d": _snap_2d(),
                         })
                     break
-            else:
-                logger.info(f"Merge rejected: i_accepts={i_accepts}, j_accepts={j_accepts}")
-                print(f"  ✗ Merge rejected (i={yes_i}/{total_i}, j={yes_j}/{total_j}).", flush=True)
-                if progress_callback:
-                    progress_callback({
-                        "iteration": iteration,
-                        "coalitions": len(coalitions),
-                        "n_agents": n_agents,
-                        "majority_quota": majority_quota,
-                        "event": "rejected",
-                        "proposal": proposal,
-                        "merged_size": None,
-                        "yes_i": yes_i, "total_i": total_i,
-                        "yes_j": yes_j, "total_j": total_j,
-                    })
 
             if iteration > n_agents * 5:
                 logger.warning("Max iterations reached")

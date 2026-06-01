@@ -126,8 +126,40 @@ if (!localStorage.getItem('setup-seen')) {
                     value="{{ form_data.sigma if form_data else '0' }}"
                     step="0.1" min="0">
             </div>
+            <div style="grid-column: 1 / -1; border-top: 1px solid #e8ecf0; padding-top: 0.9rem; margin-top: 0.2rem;">
+                <label style="display:flex; align-items:flex-start; gap:0.6rem; cursor:pointer; font-weight:normal; margin-bottom:0.5rem;">
+                    <input type="checkbox" id="cd-toggle" name="coalition_discipline" value="1"
+                        style="margin-top:0.25rem; flex-shrink:0;"
+                        {% if form_data and form_data.get('coalition_discipline') == '1' %}checked{% endif %}>
+                    <span>
+                        <strong>Coalition discipline</strong>
+                        <span class="info-tip" data-tip="Per Section 2.2 of the paper: with discipline, a coalition only splits if at least Q fraction of its members approve the proposal. Approvers move to the new compromise coalition; rejecters stay. Without discipline (Q=0), each agent independently decides — approvers always move regardless of how others vote.">i</span>
+                        <span style="display:block; font-size:0.82rem; color:#666; margin-top:0.1rem;">
+                            A coalition only splits when enough members approve (threshold Q below).
+                        </span>
+                    </span>
+                </label>
+                <div id="cd-quota-row" style="display:none; padding-left:1.6rem;">
+                    <label>
+                        Discipline threshold Q
+                        <span class="info-tip" data-tip="The minimum fraction of a coalition's members that must vote yes for the coalition to split. E.g. 0.5 = simple majority must approve before the coalition splits around the new proposal. Agents who voted yes move to the new coalition; those who voted no stay.">i</span>
+                    </label>
+                    <input type="number" name="discipline_quota"
+                        value="{{ form_data.discipline_quota if form_data else '0.5' }}"
+                        step="0.01" min="0" max="1.0">
+                </div>
+            </div>
         </div>
     </details>
+<script>
+(function(){
+    var toggle = document.getElementById('cd-toggle');
+    var row = document.getElementById('cd-quota-row');
+    function sync(){ row.style.display = toggle.checked ? 'block' : 'none'; }
+    toggle.addEventListener('change', sync);
+    sync();
+})();
+</script>
 
     <button type="submit" class="btn-submit">Run Coalition Formation →</button>
 </form>

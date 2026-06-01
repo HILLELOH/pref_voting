@@ -134,6 +134,13 @@ def run():
     status_quo = request.form.get("status_quo", "").strip()
     majority_quota_str = request.form.get("majority_quota", "0.5")
     sigma_str = request.form.get("sigma", "0.0")
+    coalition_discipline = request.form.get("coalition_discipline") == "1"
+    discipline_quota_str = request.form.get("discipline_quota", "0.5")
+    try:
+        discipline_quota = float(discipline_quota_str)
+        discipline_quota = max(0.0, min(1.0, discipline_quota))
+    except ValueError:
+        discipline_quota = 0.5
 
     # Input validation
     errors = []
@@ -211,6 +218,8 @@ def run():
                 status_quo=status_quo,
                 majority_quota=majority_quota,
                 sigma=sigma,
+                coalition_discipline=coalition_discipline,
+                discipline_quota=discipline_quota,
                 progress_callback=on_progress,
             )
             result["status_quo"] = status_quo
