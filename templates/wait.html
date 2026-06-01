@@ -90,6 +90,21 @@
     <div id="act-body"></div>
   </section>
 
+  <!-- Live 2D scatter -->
+  <section class="card" id="scatter-card" style="display:none; padding:1.25rem 1.5rem;">
+    <h3 style="font-size:0.82rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#94a3b8;margin-bottom:0.6rem;">
+      Coalition Space — PCA projection
+    </h3>
+    <svg id="live-scatter" viewBox="0 0 420 320" style="width:100%;border:1px solid #e2e8f0;border-radius:6px;background:#fafafa;">
+      <line x1="40" y1="0" x2="40" y2="300" stroke="#e2e8f0" stroke-width="1"/>
+      <line x1="40" y1="300" x2="420" y2="300" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="230" y="318" text-anchor="middle" font-size="9" fill="#94a3b8">PCA 1</text>
+      <text x="12" y="155" text-anchor="middle" font-size="9" fill="#94a3b8" transform="rotate(-90,12,155)">PCA 2</text>
+      <g id="live-pts"></g>
+    </svg>
+    <div id="scatter-meta" style="font-size:0.75rem;color:#64748b;margin-top:0.4rem;text-align:right;"></div>
+  </section>
+
   <!-- Event history -->
   <section class="card" id="history-card" style="display:none;">
     <h3>Event history</h3>
@@ -229,6 +244,83 @@ function appendEvents(events) {
     while (list.children.length > 12) list.removeChild(list.lastChild);
 }
 
+// ── live scatter ──────────────────────────────────────────────────────────────
+const PALETTE = [
+  '#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6',
+  '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
+  '#6366f1','#e11d48','#059669','#d97706','#7c3aed',
+  '#0891b2','#ea580c','#65a30d','#db2777','#0d9488',
+];
+const SX1=40, SY1=10, SX2=410, SY2=300; // SVG drawing area bounds
+let _scatterBounds = null; // fixed after first frame
+
+function _fixBounds(pts) {
+    const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+    const pad = 0.15;
+    let xMin=Math.min(...xs), xMax=Math.max(...xs);
+    let yMin=Math.min(...ys), yMax=Math.max(...ys);
+    const xPad=(xMax-xMin)*pad||0.1, yPad=(yMax-yMin)*pad||0.1;
+    return {xMin:xMin-xPad,xMax:xMax+xPad,yMin:yMin-yPad,yMax:yMax+yPad};
+}
+
+function _toSvg(x, y, b) {
+    const sx = SX1 + (x - b.xMin) / (b.xMax - b.xMin) * (SX2 - SX1);
+    const sy = SY1 + (1 - (y - b.yMin) / (b.yMax - b.yMin)) * (SY2 - SY1);
+    return [sx, sy];
+}
+
+function updateLiveScatter(pts, iteration, coalCount) {
+    if (!pts || !pts.length) return;
+    document.getElementById('scatter-card').style.display = 'block';
+    if (!_scatterBounds) _scatterBounds = _fixBounds(pts);
+    const b = _scatterBounds;
+    const g = document.getElementById('live-pts');
+
+    // Build map of existing circles by first_idx
+    const existing = {};
+    for (const el of g.querySelectorAll('g[data-fi]'))
+        existing[el.dataset.fi] = el;
+
+    const seen = new Set();
+    pts.forEach(p => {
+        const fi = String(p.first_idx);
+        seen.add(fi);
+        const [sx, sy] = _toSvg(p.x, p.y, b);
+        const r = Math.max(8, Math.min(28, 8 + Math.sqrt(p.size) * 5));
+        const col = PALETTE[p.first_idx % PALETTE.length];
+
+        if (existing[fi]) {
+            const grp = existing[fi];
+            const circ = grp.querySelector('circle');
+            const lbl  = grp.querySelector('text.pt-lbl');
+            const sz   = grp.querySelector('text.pt-sz');
+            circ.setAttribute('cx', sx); circ.setAttribute('cy', sy); circ.setAttribute('r', r);
+            lbl.setAttribute('x', sx);   lbl.setAttribute('y', sy + r + 10);
+            sz.setAttribute('x', sx);    sz.setAttribute('y', sy + 4);
+        } else {
+            const grp = document.createElementNS('http://www.w3.org/2000/svg','g');
+            grp.dataset.fi = fi;
+            grp.innerHTML = `
+              <circle cx="${sx}" cy="${sy}" r="${r}" fill="${col}" fill-opacity="0.75"
+                      stroke="${col}" stroke-width="1.5" style="transition:cx .5s,cy .5s,r .4s">
+                <title>${esc(p.rep)}</title>
+              </circle>
+              <text class="pt-sz" x="${sx}" y="${sy+4}" text-anchor="middle"
+                    font-size="9" font-weight="700" fill="white" pointer-events="none">${p.size}</text>
+              <text class="pt-lbl" x="${sx}" y="${sy+r+10}" text-anchor="middle"
+                    font-size="8" fill="#475569" pointer-events="none">${esc(truncate(p.label,22))}</text>`;
+            g.appendChild(grp);
+        }
+    });
+
+    // Remove gone coalitions
+    for (const [fi, el] of Object.entries(existing))
+        if (!seen.has(fi)) g.removeChild(el);
+
+    document.getElementById('scatter-meta').textContent =
+        `Iter ${iteration} · ${coalCount} coalition${coalCount!==1?'s':''}`;
+}
+
 // ── poll ──────────────────────────────────────────────────────────────────────
 function poll() {
     fetch('/status/' + jobId)
@@ -252,6 +344,10 @@ function poll() {
             if (data.progress) {
                 updateBar(data.progress);
                 setActivity(data.progress);
+                if (data.progress.coalitions_2d)
+                    updateLiveScatter(data.progress.coalitions_2d,
+                                      data.progress.iteration,
+                                      data.progress.coalitions);
             }
             appendEvents(data.events);
             dots = (dots + 1) % 4;

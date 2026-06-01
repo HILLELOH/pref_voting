@@ -187,6 +187,16 @@ def run():
                 if job_id in _jobs:
                     job = _jobs[job_id]
                     job["progress"] = data
+                    # Collect 2D snapshots for animation (not trimmed)
+                    if data.get("coalitions_2d") is not None:
+                        snaps = job.setdefault("snapshots", [])
+                        snaps.append({
+                            "iteration": data["iteration"],
+                            "event": data["event"],
+                            "coalitions_count": data["coalitions"],
+                            "n_agents": data["n_agents"],
+                            "points": data["coalitions_2d"],
+                        })
                     events = job.setdefault("events", [])
                     # Only log terminal events (not "start"), avoid flooding
                     if data.get("event") not in ("start",):
@@ -206,6 +216,8 @@ def run():
             result["status_quo"] = status_quo
             kwargs = _build_result_kwargs(agents_info, majority_quota, result)
             with _jobs_lock:
+                snapshots = _jobs.get(job_id, {}).get("snapshots", [])
+                kwargs["snapshots"] = snapshots
                 _jobs[job_id] = {"status": "done", "kwargs": kwargs}
         except Exception as e:
             logging.error(f"Job {job_id} failed: {e}", exc_info=True)

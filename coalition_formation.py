@@ -37,28 +37,32 @@ def _get_st_model():
 # LLAMA-CPP MODEL (per-request, not global - FIX FOR SECOND RUN CRASH)
 # ============================================================================
 _MODEL_FILENAME = "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+_MODEL_FILENAME_FALLBACK = "qwen2.5-0.5b-instruct-q3_k_m.gguf"
 _MODEL_SEARCH_PATHS = [
     os.path.join(os.path.dirname(__file__), "models", _MODEL_FILENAME),
     "/home/hilleloh/app/models/" + _MODEL_FILENAME,
+    os.path.join(os.path.dirname(__file__), "models", _MODEL_FILENAME_FALLBACK),
+    "/home/hilleloh/app/models/" + _MODEL_FILENAME_FALLBACK,
 ]
 
 def _get_llm_model():
-    """Load Llama locally via llama-cpp (fresh instance per request)."""
+    """Load local GGUF model via llama-cpp."""
     from llama_cpp import Llama
 
     model_path = next((p for p in _MODEL_SEARCH_PATHS if os.path.exists(p)), None)
     if model_path is None:
         raise FileNotFoundError(
-            f"Llama model not found. Searched: {_MODEL_SEARCH_PATHS}"
+            f"LLM model not found. Searched: {_MODEL_SEARCH_PATHS}"
         )
 
-    logger.info(f"Loading Llama-3.2-1B from {model_path}…")
+    logger.info(f"Loading model from {model_path}…")
     try:
         return Llama(
             model_path=model_path,
             n_ctx=2048,
             n_threads=4,
             verbose=False,
+            chat_format="chatml",
         )
     except Exception as e:
         logger.error(f"Llama() constructor failed: {e}", exc_info=True)
@@ -171,33 +175,41 @@ def _parse_json_response(text: str, n: int, sentence1: str, sentence2: str) -> l
 
 
 def _call_llm_local(sentence1: str, sentence2: str, n: int = 2, llm=None) -> list[str]:
-    """Call local Llama for compromise generation."""
-    logger.info(f"Calling Llama for {n} compromise candidates...")
+    """Call local LLM for compromise generation (supports Llama and Qwen instruct)."""
+    logger.info(f"Calling LLM for {n} compromise candidates...")
 
     _own_llm = llm is None
     if _own_llm:
         llm = _get_llm_model()
     try:
-        prompt = (
-            f'Two agents disagree on policy:\n'
-            f'- "{sentence1}"\n'
-            f'- "{sentence2}"\n\n'
-            f'Write {n} NEW compromise sentences (8-15 words each) that blend both ideas.\n'
-            f'Do NOT copy the input sentences. Write new sentences only.\n\n'
-            f'Example format:\n'
-            f'{{"compromises": ["Adopt balanced measures addressing both goals simultaneously.", "Combine approaches to achieve shared environmental outcomes."]}}\n\n'
-            f'Your answer:\n'
-        )
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a policy mediator. Reply only with valid JSON.",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f'Two agents disagree on policy:\n'
+                    f'- "{sentence1}"\n'
+                    f'- "{sentence2}"\n\n'
+                    f'Write {n} NEW compromise sentences (8-15 words each) that blend both ideas.\n'
+                    f'Do NOT copy the input sentences. Write new sentences only.\n\n'
+                    f'Reply ONLY with JSON like this:\n'
+                    f'{{"compromises": ["Adopt balanced measures addressing both goals simultaneously.", "Combine approaches to achieve shared environmental outcomes."]}}'
+                ),
+            },
+        ]
 
-        response = llm(
-            prompt,
-            max_tokens=400,
+        response = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=300,
             temperature=0.7,
             top_p=0.95,
         )
 
-        raw_text = response["choices"][0]["text"]
-        logger.info(f"Llama raw output: {raw_text!r}")
+        raw_text = response["choices"][0]["message"]["content"]
+        logger.info(f"LLM raw output: {raw_text!r}")
 
         compromises = _parse_json_response(raw_text, n, sentence1, sentence2)
 
@@ -266,6 +278,8 @@ def run_coalition_formation(
     reaches majority_quota of all agents.
     """
     import random
+    import numpy as np
+    from sklearn.decomposition import PCA as _PCA2D
 
     n_agents = len(agents_info)
     agents = [Agent(info["name"], info["ideal"]) for info in agents_info]
@@ -281,6 +295,29 @@ def run_coalition_formation(
     ]
 
     all_ideals = [a.ideal for a in agents]
+
+    # PCA-2D setup: fit once on agent ideals, reuse transform every snapshot
+    _ideal_embs = np.array([a.ideal_embedding for a in agents])
+    _pca_2d = _PCA2D(n_components=min(2, n_agents), random_state=42)
+    _pca_2d.fit(_ideal_embs)
+    _emb_2d_cache: dict = {a.ideal: a.ideal_embedding for a in agents}
+
+    def _snap_2d():
+        pts = []
+        for c in coalitions:
+            rep = c["representative"]
+            if rep not in _emb_2d_cache:
+                _emb_2d_cache[rep] = _encode_sentence(rep)
+            xy = _pca_2d.transform([_emb_2d_cache[rep]])[0]
+            pts.append({
+                "x": round(float(xy[0]), 4),
+                "y": round(float(xy[1]), 4) if len(xy) > 1 else 0.0,
+                "size": len(c["members"]),
+                "label": ", ".join(agents[idx].name for idx in c["members"]),
+                "rep": c["representative"][:80],
+                "first_idx": min(c["members"]),
+            })
+        return pts
     iteration = 0
     winning_coalition = None
     winning_sentence = None
@@ -301,6 +338,7 @@ def run_coalition_formation(
                     "event": "start",
                     "proposal": None,
                     "merged_size": None,
+                    "coalitions_2d": _snap_2d(),
                 })
 
             if seed is not None:
@@ -399,6 +437,7 @@ def run_coalition_formation(
                         "merged_size": merged_count,
                         "yes_i": yes_i, "total_i": total_i,
                         "yes_j": yes_j, "total_j": total_j,
+                        "coalitions_2d": _snap_2d(),
                     })
 
                 if merged_count / n_agents >= majority_quota:
@@ -415,6 +454,7 @@ def run_coalition_formation(
                             "event": "majority",
                             "proposal": proposal,
                             "merged_size": merged_count,
+                            "coalitions_2d": _snap_2d(),
                         })
                     break
             else:

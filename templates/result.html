@@ -26,6 +26,212 @@
     <p><strong>Status Quo:</strong> {{ status_quo }}</p>
 </section>
 
+<section class="card" id="anim-section">
+    <h2>Coalition Formation — Geometric View</h2>
+    <p class="hint" style="margin-bottom:1rem;">
+        Each point = one coalition. Size = number of members. Axes = first two PCA components of proposal embeddings.
+    </p>
+
+    <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start;">
+      <!-- scatter SVG -->
+      <div style="flex:1;min-width:260px;max-width:480px;">
+        <svg id="anim-svg" viewBox="0 0 440 340"
+             style="width:100%;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+          <!-- grid lines -->
+          <line x1="44" y1="0" x2="44" y2="310" stroke="#e9edf3" stroke-width="1"/>
+          <line x1="44" y1="310" x2="440" y2="310" stroke="#e9edf3" stroke-width="1"/>
+          <!-- axis labels -->
+          <text x="242" y="332" text-anchor="middle" font-size="9" fill="#94a3b8">PCA 1</text>
+          <text x="13" y="160" text-anchor="middle" font-size="9" fill="#94a3b8"
+                transform="rotate(-90,13,160)">PCA 2</text>
+          <g id="anim-pts"></g>
+        </svg>
+      </div>
+
+      <!-- controls + legend -->
+      <div style="flex:0 0 auto;min-width:180px;">
+        <div id="anim-frame-label" style="font-size:0.95rem;font-weight:600;color:#1e293b;margin-bottom:0.3rem;">
+          Frame 1 / —
+        </div>
+        <div id="anim-iter-label" style="font-size:0.8rem;color:#64748b;margin-bottom:1rem;"></div>
+
+        <!-- progress dots -->
+        <div id="anim-dots" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:1rem;"></div>
+
+        <!-- playback buttons -->
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:1rem;">
+          <button onclick="animStep(-1)" style="padding:0.3rem 0.7rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer;font-size:0.9rem;">◀</button>
+          <button id="play-btn" onclick="togglePlay()"
+                  style="padding:0.3rem 0.9rem;border:1px solid #3b82f6;border-radius:5px;background:#3b82f6;color:#fff;cursor:pointer;font-size:0.85rem;font-weight:600;">
+            ▷ Play
+          </button>
+          <button onclick="animStep(1)" style="padding:0.3rem 0.7rem;border:1px solid #cbd5e1;border-radius:5px;background:#fff;cursor:pointer;font-size:0.9rem;">▶</button>
+        </div>
+
+        <!-- current rep sentence -->
+        <div id="anim-rep-box" style="font-size:0.78rem;color:#475569;background:#f0f4ff;border:1px solid #c7d7fd;border-radius:6px;padding:0.5rem 0.75rem;display:none;max-width:200px;"></div>
+      </div>
+    </div>
+</section>
+
+<script>
+(function() {
+  const frames = {{ snapshots | tojson }};
+  if (!frames || frames.length === 0) {
+    document.getElementById('anim-section').style.display = 'none';
+    return;
+  }
+
+  const PALETTE = [
+    '#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6',
+    '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
+    '#6366f1','#e11d48','#059669','#d97706','#7c3aed',
+    '#0891b2','#ea580c','#65a30d','#db2777','#0d9488',
+  ];
+
+  // Pre-compute global bounds from all frames
+  let xMin=Infinity,xMax=-Infinity,yMin=Infinity,yMax=-Infinity;
+  frames.forEach(f => f.points.forEach(p => {
+    if(p.x<xMin)xMin=p.x; if(p.x>xMax)xMax=p.x;
+    if(p.y<yMin)yMin=p.y; if(p.y>yMax)yMax=p.y;
+  }));
+  const xPad=(xMax-xMin)*0.18||0.1, yPad=(yMax-yMin)*0.18||0.1;
+  xMin-=xPad; xMax+=xPad; yMin-=yPad; yMax+=yPad;
+
+  const SX1=44, SY1=10, SX2=432, SY2=308;
+  function toSvgX(x){ return SX1+(x-xMin)/(xMax-xMin)*(SX2-SX1); }
+  function toSvgY(y){ return SY1+(1-(y-yMin)/(yMax-yMin))*(SY2-SY1); }
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function trunc(s,n){ return s&&s.length>n?s.slice(0,n)+'…':(s||''); }
+
+  let curFrame=0, playing=false, playTimer=null;
+  const g = document.getElementById('anim-pts');
+
+  // Build progress dots
+  const dotsEl = document.getElementById('anim-dots');
+  frames.forEach((f,i)=>{
+    const d = document.createElement('div');
+    d.id = 'dot-'+i;
+    d.style.cssText='width:8px;height:8px;border-radius:50%;background:#cbd5e1;cursor:pointer;transition:background .2s,transform .2s;';
+    d.onclick = ()=>{ stopPlay(); showFrame(i); };
+    d.title = `Frame ${i+1}: iter ${f.iteration}`;
+    dotsEl.appendChild(d);
+  });
+
+  function showFrame(idx) {
+    curFrame = idx;
+    const f = frames[idx];
+
+    // Update labels
+    document.getElementById('anim-frame-label').textContent =
+      `Frame ${idx+1} / ${frames.length}`;
+    const evLabel = f.event==='majority' ? '🏆 Majority reached' :
+                    f.event==='merged'   ? '✅ After merge' :
+                    `Iter ${f.iteration} — start`;
+    document.getElementById('anim-iter-label').textContent =
+      `${evLabel} · ${f.coalitions_count} coalition${f.coalitions_count!==1?'s':''}`;
+
+    // Update progress dots
+    dotsEl.querySelectorAll('div').forEach((d,i)=>{
+      d.style.background = i===idx ? '#3b82f6' : (i<idx?'#93c5fd':'#cbd5e1');
+      d.style.transform   = i===idx ? 'scale(1.4)' : 'scale(1)';
+    });
+
+    // Build map of existing groups
+    const existing={};
+    for(const el of g.querySelectorAll('g[data-fi]'))
+      existing[el.dataset.fi]=el;
+
+    const seen=new Set();
+    f.points.forEach(p=>{
+      const fi=String(p.first_idx);
+      seen.add(fi);
+      const sx=toSvgX(p.x), sy=toSvgY(p.y);
+      const r=Math.max(9,Math.min(32,9+Math.sqrt(p.size)*5.5));
+      const col=PALETTE[p.first_idx%PALETTE.length];
+      const isMajority = f.event==='majority';
+      const stroke = isMajority && p.size===f.points.reduce((m,q)=>q.size>m?q.size:m,0)
+                     ? '#f59e0b' : col;
+      const sw = isMajority && stroke==='#f59e0b' ? 3 : 1.5;
+
+      if(existing[fi]){
+        const grp=existing[fi];
+        const circ=grp.querySelector('circle');
+        const sz=grp.querySelector('text.sz');
+        const lbl=grp.querySelector('text.lbl');
+        circ.style.cx=sx+'px'; circ.style.cy=sy+'px'; circ.style.r=r+'px';
+        circ.setAttribute('cx',sx); circ.setAttribute('cy',sy); circ.setAttribute('r',r);
+        circ.setAttribute('fill',col); circ.setAttribute('stroke',stroke);
+        circ.setAttribute('stroke-width',sw);
+        sz.setAttribute('x',sx); sz.setAttribute('y',sy+4); sz.textContent=p.size;
+        lbl.setAttribute('x',sx); lbl.setAttribute('y',sy+r+11);
+        lbl.textContent=trunc(p.label,24);
+        grp.querySelector('title').textContent=p.rep;
+      } else {
+        const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
+        grp.dataset.fi=fi;
+        grp.setAttribute('style','cursor:pointer');
+        grp.innerHTML=`
+          <circle cx="${sx}" cy="${sy}" r="${r}" fill="${col}" fill-opacity="0.78"
+                  stroke="${stroke}" stroke-width="${sw}"
+                  style="transition:cx .55s ease,cy .55s ease,r .4s ease">
+            <title>${esc(p.rep)}</title>
+          </circle>
+          <text class="sz" x="${sx}" y="${sy+4}" text-anchor="middle"
+                font-size="10" font-weight="700" fill="white" pointer-events="none">${p.size}</text>
+          <text class="lbl" x="${sx}" y="${sy+r+11}" text-anchor="middle"
+                font-size="8" fill="#475569" pointer-events="none">${esc(trunc(p.label,24))}</text>`;
+        grp.addEventListener('mouseenter',()=>{
+          const box=document.getElementById('anim-rep-box');
+          box.style.display='block';
+          box.textContent=p.rep;
+        });
+        grp.addEventListener('mouseleave',()=>{
+          document.getElementById('anim-rep-box').style.display='none';
+        });
+        g.appendChild(grp);
+      }
+    });
+
+    // Fade out gone coalitions
+    for(const [fi,el] of Object.entries(existing)){
+      if(!seen.has(fi)){
+        el.style.opacity='0';
+        el.style.transition='opacity .4s';
+        setTimeout(()=>{ if(g.contains(el)) g.removeChild(el); },450);
+      }
+    }
+  }
+
+  window.animStep = function(dir){
+    stopPlay();
+    showFrame(Math.max(0,Math.min(frames.length-1,curFrame+dir)));
+  };
+
+  function stopPlay(){
+    playing=false;
+    clearInterval(playTimer);
+    document.getElementById('play-btn').textContent='▷ Play';
+  }
+
+  window.togglePlay = function(){
+    if(playing){ stopPlay(); return; }
+    playing=true;
+    document.getElementById('play-btn').textContent='⏸ Pause';
+    // If at last frame, restart
+    if(curFrame>=frames.length-1) showFrame(0);
+    playTimer=setInterval(()=>{
+      if(curFrame>=frames.length-1){ stopPlay(); return; }
+      showFrame(curFrame+1);
+    }, 900);
+  };
+
+  // Kick off
+  showFrame(0);
+  setTimeout(togglePlay, 600); // auto-play after a moment
+})();
+</script>
+
 <section class="card">
     <h2>Guaranteed Properties</h2>
     <p class="hint">
