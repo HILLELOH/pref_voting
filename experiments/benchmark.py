@@ -11,7 +11,6 @@ import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from experiments_csv import Experiment
-from experiments_csv.plot_results import multi_plot_results
 from coalition_formation import run_coalition_formation
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
@@ -71,13 +70,41 @@ def single_run(n_agents: int, majority_quota: float, seed: int = 42) -> dict:
     }
 
 
+def _plot_results(results_csv: str, results_dir: str):
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv(results_csv)
+    quotas = sorted(df["majority_quota"].unique())
+    metrics = [
+        ("runtime", "Runtime (seconds)", "runtime_vs_agents.png"),
+        ("iterations", "Iterations to convergence", "iterations_vs_agents.png"),
+        ("coalition_fraction", "Coalition size / n_agents", "coalition_fraction_vs_agents.png"),
+    ]
+
+    for col, ylabel, filename in metrics:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        for q in quotas:
+            subset = df[df["majority_quota"] == q].groupby("n_agents")[col].mean()
+            ax.plot(subset.index, subset.values, marker="o", label=f"quota={q}")
+        ax.set_xlabel("Number of agents")
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{ylabel} vs number of agents")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(os.path.join(results_dir, filename), dpi=150)
+        plt.close(fig)
+        print(f"Saved {filename}")
+
+
 if __name__ == "__main__":
     exp = Experiment(results_folder=RESULTS_DIR, results_filename=RESULTS_FILE)
 
     exp.run_with_time_limit(
         single_run=single_run,
         input_ranges={
-            "n_agents": [3, 5, 7, 10, 12, 15],
+            "n_agents": [3, 5, 7, 10, 15, 20, 30, 40, 50, 70, 100],
             "majority_quota": [0.5, 0.67, 1.0],
             "seed": [42, 123, 777],
         },
@@ -86,48 +113,7 @@ if __name__ == "__main__":
     )
 
     results_csv = os.path.join(RESULTS_DIR, RESULTS_FILE)
-
-    # Plot runtime vs n_agents for each majority_quota
-    multi_plot_results(
-        results_csv_file=results_csv,
-        filter={},
-        x_field="n_agents",
-        y_field="runtime",
-        z_field="majority_quota",
-        mean=True,
-        subplot_field=None,
-        subplot_rows=1,
-        subplot_cols=1,
-        save_to_file=os.path.join(RESULTS_DIR, "runtime_vs_agents.png"),
-    )
-
-    # Plot iterations vs n_agents for each majority_quota
-    multi_plot_results(
-        results_csv_file=results_csv,
-        filter={},
-        x_field="n_agents",
-        y_field="iterations",
-        z_field="majority_quota",
-        mean=True,
-        subplot_field=None,
-        subplot_rows=1,
-        subplot_cols=1,
-        save_to_file=os.path.join(RESULTS_DIR, "iterations_vs_agents.png"),
-    )
-
-    # Plot coalition_fraction vs n_agents for each majority_quota
-    multi_plot_results(
-        results_csv_file=results_csv,
-        filter={},
-        x_field="n_agents",
-        y_field="coalition_fraction",
-        z_field="majority_quota",
-        mean=True,
-        subplot_field=None,
-        subplot_rows=1,
-        subplot_cols=1,
-        save_to_file=os.path.join(RESULTS_DIR, "coalition_fraction_vs_agents.png"),
-    )
+    _plot_results(results_csv, RESULTS_DIR)
 
     print(f"\nResults saved to {results_csv}")
     print(f"Plots saved to {RESULTS_DIR}/")
