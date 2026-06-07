@@ -79,7 +79,7 @@ if __name__ == "__main__":
     exp.run_with_time_limit(
         single_run=single_run,
         input_ranges={
-            "n_agents": [3, 5, 7, 10, 12, 15],
+            "n_agents": [3, 5, 7, 10, 15, 20, 30, 40, 50, 70, 100],
             "majority_quota": [0.5, 0.67, 1.0],
             "seed": [42, 123, 777],
         },
