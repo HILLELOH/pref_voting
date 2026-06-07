@@ -70,27 +70,6 @@ def single_run(n_agents: int, majority_quota: float, seed: int = 42) -> dict:
     }
 
 
-if __name__ == "__main__":
-    exp = Experiment(results_folder=RESULTS_DIR, results_filename=RESULTS_FILE)
-
-    exp.run_with_time_limit(
-        single_run=single_run,
-        input_ranges={
-            "n_agents": [3, 5, 7, 10, 12, 15],
-            "majority_quota": [0.5, 0.67, 1.0],
-            "seed": [42, 123, 777],
-        },
-        time_limit=TIME_LIMIT,
-        runtime_field_name="runtime",
-    )
-
-    results_csv = os.path.join(RESULTS_DIR, RESULTS_FILE)
-    _plot_results(results_csv, RESULTS_DIR)
-
-    print(f"\nResults saved to {results_csv}")
-    print(f"Plots saved to {RESULTS_DIR}/")
-
-
 def _plot_results(results_csv: str, results_dir: str):
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -117,3 +96,24 @@ def _plot_results(results_csv: str, results_dir: str):
         fig.savefig(os.path.join(results_dir, filename), dpi=150)
         plt.close(fig)
         print(f"Saved {filename}")
+
+
+if __name__ == "__main__":
+    exp = Experiment(results_folder=RESULTS_DIR, results_filename=RESULTS_FILE)
+
+    exp.run_with_time_limit(
+        single_run=single_run,
+        input_ranges={
+            "n_agents": [3, 5, 7, 10, 12, 15],
+            "majority_quota": [0.5, 0.67, 1.0],
+            "seed": [42, 123, 777],
+        },
+        time_limit=TIME_LIMIT,
+        runtime_field_name="runtime",
+    )
+
+    results_csv = os.path.join(RESULTS_DIR, RESULTS_FILE)
+    _plot_results(results_csv, RESULTS_DIR)
+
+    print(f"\nResults saved to {results_csv}")
+    print(f"Plots saved to {RESULTS_DIR}/")
